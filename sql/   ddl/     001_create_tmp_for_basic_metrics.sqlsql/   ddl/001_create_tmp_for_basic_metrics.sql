@@ -1,1 +1,0 @@
-sql/ddl/001_create_tmp_for_basic_metrics.sql
