@@ -1,0 +1,61 @@
+DROP TABLE IF EXISTS cube.risk;
+
+CREATE TABLE cube.risk
+(
+    f_region_smo_cd String,
+    f_profile_cd String,
+    f_dn_group_cd String,
+    f_y Int32,
+    f_q Int32,
+    f_smo String,
+    f_mo String,
+    risk_id Int8,
+    countV UInt64,
+    countGtAverageV UInt64,
+    mCountV UInt64,
+    wCountV UInt64,
+    m1839V UInt64,
+    m1839_percent UInt8,
+    m4065V UInt64,
+    m4065_percent UInt8,
+    mOver65V UInt64,
+    mOver65_percent UInt8,
+    w1839V UInt64,
+    w1839_percent UInt8,
+    w4060V UInt64,
+    w4060_percent UInt8,
+    wOver60V UInt64,
+    wOver60_percent UInt8,
+    mCountGtAverageV UInt64,
+    wCountGtAverageV UInt64,
+    m1839GtAverageV UInt64,
+    m1839GtAverage_percent UInt8,
+    m4065GtAverageV UInt64,
+    m4065GtAverage_percent UInt8,
+    mOver65GtAverageV UInt64,
+    mOver65GtAverage_percent UInt8,
+    w1839GtAverageV UInt64,
+    w1839GtAverage_percent UInt8,
+    w4060GtAverageV UInt64,
+    w4060GtAverage_percent UInt8,
+    wOver60GtAverageV UInt64,
+    wOver60GtAverage_percent UInt8,
+    lowV UInt64,
+    low_percent UInt8,
+    averageV UInt64,
+    average_percent UInt8,
+    highV UInt64,
+    high_percent UInt8
+)
+ENGINE = MergeTree
+ORDER BY
+(
+    f_region_smo_cd,
+    f_profile_cd,
+    f_dn_group_cd,
+    f_y,
+    f_q,
+    f_smo,
+    f_mo,
+    risk_id
+);
