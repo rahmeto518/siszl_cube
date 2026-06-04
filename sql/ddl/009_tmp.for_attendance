@@ -1,0 +1,43 @@
+CREATE TABLE tmp.for_attendance
+(
+    mpioip String,
+    in_dt Date,
+    out_dt Nullable(Date),
+    death_dt Nullable(Date),
+    birth_dt Date,
+    task_id UUID,
+    task_status_cd Int32,
+    task_end Date,
+    closed_dt Nullable(Date),
+    f_region_smo_cd String,
+    f_profile_cd String,
+    f_dn_group_cd String,
+    f_y Int32,
+    f_q Int32,
+    f_smo String,
+    f_mo String
+)
+ENGINE = MergeTree
+ORDER BY (mpioip);
+
+INSERT INTO tmp.for_attendance
+SELECT
+    di.mpioip,
+    di.in_dt,
+    di.out_dt,
+    di.death_dt,
+    p.birth_dt,
+    t.task_id,
+    t.task_status_cd,
+    t.task_end,
+    t.closed_dt,
+    if(ifNull(di.smo_cd, '') = '', '0', substring(di.smo_cd, 1, 2)) AS f_region_smo_cd,
+    if(ifNull(di.profile_cd, 0) = 0, '0', toString(di.profile_cd)) AS f_profile_cd,
+    if(ifNull(di.group_cd, 0) = 0, '0', toString(di.group_cd)) AS f_dn_group_cd,
+    toYear(di.in_dt) AS f_y,
+    0 AS f_q,
+    if(ifNull(di.smo_cd, '') = '', '0', di.smo_cd) AS f_smo,
+    if(ifNull(di.attach_mo_cd, '') = '', '0', di.attach_mo_cd) AS f_mo
+FROM stage.disp_info di
+LEFT JOIN stage.dispans_person p ON p.mpioip = di.mpioip
+LEFT JOIN stage.event_task t ON t.mpioip = di.mpioip;
