@@ -1,0 +1,23 @@
+CREATE TABLE tmp.dim_event_statuses_filters
+(
+    f_region_smo_cd String,
+    f_profile_cd String,
+    f_dn_group_cd String,
+    f_y Int32,
+    f_q Int32,
+    f_smo String,
+    f_mo String
+)
+ENGINE = MergeTree
+ORDER BY (f_region_smo_cd, f_profile_cd, f_dn_group_cd, f_y, f_q, f_smo, f_mo);
+
+INSERT INTO tmp.dim_event_statuses_filters
+SELECT DISTINCT
+    f_region_smo_cd,
+    f_profile_cd,
+    f_dn_group_cd,
+    f_y,
+    f_q,
+    f_smo,
+    f_mo
+FROM tmp.for_event_statuses;
