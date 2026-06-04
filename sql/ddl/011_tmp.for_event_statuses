@@ -1,0 +1,31 @@
+CREATE TABLE tmp.for_event_statuses
+(
+    task_id UUID,
+    task_status_cd Int32,
+    task_start Date,
+    task_end Date,
+    f_region_smo_cd String,
+    f_profile_cd String,
+    f_dn_group_cd String,
+    f_y Int32,
+    f_q Int32,
+    f_smo String,
+    f_mo String
+)
+ENGINE = MergeTree
+ORDER BY (task_id);
+
+INSERT INTO tmp.for_event_statuses
+SELECT
+    t.task_id,
+    t.task_status_cd,
+    t.task_start,
+    t.task_end,
+    if(ifNull(t.smo_cd, '') = '', '0', substring(t.smo_cd, 1, 2)) AS f_region_smo_cd,
+    if(ifNull(t.profile_cd, 0) = 0, '0', toString(t.profile_cd)) AS f_profile_cd,
+    if(ifNull(t.group_cd, 0) = 0, '0', toString(t.group_cd)) AS f_dn_group_cd,
+    toYear(t.task_start) AS f_y,
+    0 AS f_q,
+    if(ifNull(t.smo_cd, '') = '', '0', t.smo_cd) AS f_smo,
+    if(ifNull(t.mo_cd, '') = '', '0', t.mo_cd) AS f_mo
+FROM stage.event_task t;
