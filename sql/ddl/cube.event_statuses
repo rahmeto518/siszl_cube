@@ -1,0 +1,17 @@
+CREATE TABLE IF NOT EXISTS cube.event_statuses
+(
+    f_region_smo_cd String,
+    f_profile_cd String,
+    f_dn_group_cd String,
+    f_y Int32,
+    f_q Int32,
+    f_smo String,
+    f_mo String,
+    tasks_count UInt64,
+    done_task_count UInt64,
+    assumpt_task_count UInt64,
+    plan_task_count UInt64,
+    failed_task_count UInt64
+)
+ENGINE = MergeTree
+ORDER BY (f_region_smo_cd, f_profile_cd, f_dn_group_cd, f_y, f_q, f_smo, f_mo);
