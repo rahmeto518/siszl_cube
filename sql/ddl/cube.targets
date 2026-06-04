@@ -1,0 +1,17 @@
+CREATE TABLE IF NOT EXISTS cube.targets
+(
+    f_region_smo_cd String,
+    f_profile_cd String,
+    f_dn_group_cd String,
+    f_y Int32,
+    f_q Int32,
+    f_smo String,
+    f_mo String,
+    total_dnp_cnt UInt64,
+    total_dn_from_dnp_cnt UInt64,
+    worker_count UInt64,
+    not_worker_count UInt64,
+    total UInt64
+)
+ENGINE = MergeTree
+ORDER BY (f_region_smo_cd, f_profile_cd, f_dn_group_cd, f_y, f_q, f_smo, f_mo);
