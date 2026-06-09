@@ -1,5 +1,8 @@
-CREATE TABLE tmp.dim_targets_filters
+CREATE TABLE tmp.active_dn
 (
+    master_person_id String,
+    pol_cd Int64,
+    birth_dt Date,
     f_region_smo_cd String,
     f_profile_cd String,
     f_dn_group_cd String,
@@ -9,15 +12,22 @@ CREATE TABLE tmp.dim_targets_filters
     f_mo String
 )
 ENGINE = MergeTree
-ORDER BY (f_region_smo_cd, f_profile_cd, f_dn_group_cd, f_y, f_q, f_smo, f_mo);
+ORDER BY (master_person_id);
 
-INSERT INTO tmp.dim_targets_filters
-SELECT DISTINCT
-    f_region_smo_cd,
-    f_profile_cd,
-    f_dn_group_cd,
-    f_y,
-    f_q,
-    f_smo,
-    f_mo
-FROM tmp.for_targets;
+INSERT INTO tmp.active_dn
+SELECT
+    di.master_person_id,
+    p.pol_cd,
+    p.birth_dt,
+    if(ifNull(di.smo_cd, '') = '', '0', substring(di.smo_cd, 1, 2)) AS f_region_smo_cd,
+    if(ifNull(di.profile_cd, 0) = 0, '0', toString(di.profile_cd)) AS f_profile_cd,
+    if(ifNull(di.group_cd, 0) = 0, '0', toString(di.group_cd)) AS f_dn_group_cd,
+    toYear(di.in_dt) AS f_y,
+    0 AS f_q,
+    if(ifNull(di.smo_cd, '') = '', '0', di.smo_cd) AS f_smo,
+    if(ifNull(di.attach_mo_cd, '') = '', '0', di.attach_mo_cd) AS f_mo
+FROM siszl_dashboard_disp_info di
+LEFT JOIN siszl_dispans_person p ON p.mpioip = di.mpioip
+WHERE di.in_dt <= :end_date
+  AND (di.out_dt >= :start_date OR di.out_dt IS NULL)
+  AND di.profile_cd IS NOT NULL AND di.profile_cd != -1; 
