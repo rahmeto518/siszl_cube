@@ -1,44 +1,29 @@
-CREATE TABLE tmp.for_targets
+CREATE TABLE tmp.dnp_eligible
 (
-    mpioip String,
     master_person_id String,
-    pol_cd Int64,
-    birth_dt Date,
-    in_date_plan Date,
-    death_dt Nullable(Date),
-    in_dt Nullable(Date),
-    out_dt Nullable(Date),
-    profile_cd Int32,
     f_region_smo_cd String,
     f_profile_cd String,
     f_dn_group_cd String,
     f_y Int32,
     f_q Int32,
     f_smo String,
-    f_mo String
+    f_mo String,
+    is_eligible UInt8
 )
 ENGINE = MergeTree
-ORDER BY (mpioip);
+ORDER BY (master_person_id);
 
-INSERT INTO tmp.for_targets
+INSERT INTO tmp.dnp_eligible
 SELECT
-    dnp.mpioip,
     dnp.master_person_id,
-    dnp.pol_cd,
-    dnp.birth_dt,
-    dnp.in_date_plan,
-    dnp.death_dt,
-    di.in_dt,
-    di.out_dt,
-    di.profile_cd,
     if(ifNull(dnp.smo_cd, '') = '', '0', substring(dnp.smo_cd, 1, 2)) AS f_region_smo_cd,
     if(ifNull(dnp.profile_cd, 0) = 0, '0', toString(dnp.profile_cd)) AS f_profile_cd,
     if(ifNull(dnp.group_cd, 0) = 0, '0', toString(dnp.group_cd)) AS f_dn_group_cd,
     toYear(dnp.in_date_plan) AS f_y,
     0 AS f_q,
     if(ifNull(dnp.smo_cd, '') = '', '0', dnp.smo_cd) AS f_smo,
-    if(ifNull(dnp.mo_cd, '') = '', '0', dnp.mo_cd) AS f_mo
-FROM stage.dispans_person dnp
-LEFT JOIN stage.disp_info di ON di.mpioip = dnp.mpioip
-    AND di.in_dt <= dnp.in_date_plan
-    AND (di.out_dt IS NULL OR di.out_dt >= dnp.in_date_plan);
+    if(ifNull(dnp.trigger_mo_cd, '') = '', '0', dnp.trigger_mo_cd) AS f_mo,
+    1 AS is_eligible
+FROM siszl_dashboard_person_dnp dnp
+WHERE dnp.dnp IS NOT NULL
+  AND (dnp.death_dt IS NULL OR dnp.death_dt >= :end_date);
