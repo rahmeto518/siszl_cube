@@ -7,11 +7,90 @@ CREATE TABLE IF NOT EXISTS cube.targets
     f_q Int32,
     f_smo String,
     f_mo String,
-    total_dnp_cnt UInt64,
-    total_dn_from_dnp_cnt UInt64,
-    worker_count UInt64,
-    not_worker_count UInt64,
-    total UInt64
+    total_dnp_cnt UInt64,                     
+    total_dn_from_dnp_cnt UInt64,             
+    total_dn_from_dnp_percent Decimal(18,2),  
+    zl_on_dn_total UInt64,                    
+    worker_count_v UInt64,                    
+    worker_percent_v Decimal(18,2),           
+    notwork_count_v UInt64,                   
+    notwork_percent_v Decimal(18,2)           
 )
 ENGINE = MergeTree
 ORDER BY (f_region_smo_cd, f_profile_cd, f_dn_group_cd, f_y, f_q, f_smo, f_mo);
+
+
+INSERT INTO cube.targets
+SELECT
+    f.f_region_smo_cd,
+    f.f_profile_cd,
+    f.f_dn_group_cd,
+    f.f_y,
+    f.f_q,
+    f.f_smo,
+    f.f_mo,
+    countIf(x.is_eligible = 1) AS total_dnp_cnt,
+    countIf(x.is_eligible = 1 AND x.in_dn = 1) AS total_dn_from_dnp_cnt,
+    round(100.0 * countIf(x.is_eligible = 1 AND x.in_dn = 1) / nullIf(countIf(x.is_eligible = 1), 0), 2) AS total_dn_from_dnp_percent,
+    countIf(x.in_dn = 1) AS zl_on_dn_total,
+    countIf(x.in_dn = 1 AND ((x.pol_cd = 1 AND dateDiff('year', x.birth_dt, :end_date) < 65)
+                           OR (x.pol_cd = 2 AND dateDiff('year', x.birth_dt, :end_date) < 60))) AS worker_count_v,
+    round(100.0 * countIf(x.in_dn = 1 AND ((x.pol_cd = 1 AND dateDiff('year', x.birth_dt, :end_date) < 65)
+                                         OR (x.pol_cd = 2 AND dateDiff('year', x.birth_dt, :end_date) < 60)))
+          / nullIf(countIf(x.in_dn = 1), 0), 2) AS worker_percent_v,
+    countIf(x.in_dn = 1 AND ((x.pol_cd = 1 AND dateDiff('year', x.birth_dt, :end_date) >= 65)
+                           OR (x.pol_cd = 2 AND dateDiff('year', x.birth_dt, :end_date) >= 60))) AS notwork_count_v,
+    round(100.0 * countIf(x.in_dn = 1 AND ((x.pol_cd = 1 AND dateDiff('year', x.birth_dt, :end_date) >= 65)
+                                         OR (x.pol_cd = 2 AND dateDiff('year', x.birth_dt, :end_date) >= 60)))
+          / nullIf(countIf(x.in_dn = 1), 0), 2) AS notwork_percent_v
+FROM
+(
+    SELECT
+        if(bitTest(mask, 0), '0', d.f_region_smo_cd) AS f_region_smo_cd,
+        if(bitTest(mask, 1), '0', d.f_profile_cd) AS f_profile_cd,
+        if(bitTest(mask, 2), '0', d.f_dn_group_cd) AS f_dn_group_cd,
+        d.f_y,
+        d.f_q,
+        if(bitTest(mask, 3), '0', d.f_smo) AS f_smo,
+        if(bitTest(mask, 4), '0', d.f_mo) AS f_mo,
+        d.master_person_id,
+        d.birth_dt,
+        d.pol_cd,
+        d.is_eligible,
+        d.in_dn
+    FROM
+    (
+        SELECT
+            COALESCE(dnp.master_person_id, dn.master_person_id) AS master_person_id,
+            COALESCE(dnp.birth_dt, dn.birth_dt) AS birth_dt,
+            COALESCE(dnp.pol_cd, dn.pol_cd) AS pol_cd,
+            COALESCE(dnp.f_region_smo_cd, dn.f_region_smo_cd) AS f_region_smo_cd,
+            COALESCE(dnp.f_profile_cd, dn.f_profile_cd) AS f_profile_cd,
+            COALESCE(dnp.f_dn_group_cd, dn.f_dn_group_cd) AS f_dn_group_cd,
+            COALESCE(dnp.f_y, dn.f_y) AS f_y,
+            COALESCE(dnp.f_q, dn.f_q) AS f_q,
+            COALESCE(dnp.f_smo, dn.f_smo) AS f_smo,
+            COALESCE(dnp.f_mo, dn.f_mo) AS f_mo,
+            if(dnp.master_person_id IS NOT NULL, 1, 0) AS is_eligible,
+            if(dn.master_person_id IS NOT NULL, 1, 0) AS in_dn
+        FROM tmp.dnp_eligible dnp
+        FULL OUTER JOIN tmp.active_dn dn
+            ON dnp.master_person_id = dn.master_person_id
+            AND dnp.f_region_smo_cd = dn.f_region_smo_cd
+            AND dnp.f_profile_cd = dn.f_profile_cd
+            AND dnp.f_dn_group_cd = dn.f_dn_group_cd
+            AND dnp.f_y = dn.f_y
+            AND dnp.f_q = dn.f_q
+            AND dnp.f_smo = dn.f_smo
+            AND dnp.f_mo = dn.f_mo
+    ) d
+    ARRAY JOIN range(32) AS mask
+) x
+GROUP BY
+    f_region_smo_cd,
+    f_profile_cd,
+    f_dn_group_cd,
+    f_y,
+    f_q,
+    f_smo,
+    f_mo;
