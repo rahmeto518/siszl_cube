@@ -1,0 +1,191 @@
+INSERT INTO tmp.work_person_filter_source
+SELECT DISTINCT
+    mpioip,
+    in_dt,
+    out_dt,
+    birth_dt,
+    pol_cd,
+    if(ifNull(smo_cd, '') = '', '0', substring(smo_cd, 1, 2)) AS real_region_smo_cd,
+    toString(ifNull(profile_cd, 0)) AS real_profile_cd,
+    toString(ifNull(group_cd, 0)) AS real_dn_group_cd,
+    if(ifNull(smo_cd, '') = '', '0', smo_cd) AS real_smo,
+    if(ifNull(attach_mo_cd, '') = '', '0', attach_mo_cd) AS real_mo
+FROM tmp.for_basic_metrics
+WHERE mpioip IS NOT NULL
+  AND birth_dt IS NOT NULL;
+
+
+INSERT INTO tmp.work_detail
+SELECT
+    real_region_smo_cd AS f_region_smo_cd,
+    real_profile_cd AS f_profile_cd,
+    real_dn_group_cd AS f_dn_group_cd,
+    f_y,
+    f_q,
+    real_smo AS f_smo,
+    real_mo AS f_mo,
+    uniqExactIf(mpioip, out_dt IS NULL) AS zl_on_dn_total,
+    uniqExactIf(
+        mpioip,
+        out_dt IS NULL
+        AND (
+            (pol_cd = 1 AND age_on_period_end < 65)
+            OR
+            (pol_cd = 2 AND age_on_period_end < 60)
+        )
+    ) AS worker_count_v,
+    uniqExactIf(
+        mpioip,
+        out_dt IS NULL
+        AND (
+            (pol_cd = 1 AND age_on_period_end >= 65)
+            OR
+            (pol_cd = 2 AND age_on_period_end >= 60)
+        )
+    ) AS notwork_count_v
+FROM
+(
+    SELECT
+        s.*,
+        cp.f_y,
+        cp.f_q,
+        cp.dt_to,
+        greatest(
+            0,
+            dateDiff('year', s.birth_dt, addDays(cp.dt_to, -1))
+            - if(
+                formatDateTime(addDays(cp.dt_to, -1), '%m%d')
+                < formatDateTime(s.birth_dt, '%m%d'),
+                1,
+                0
+            )
+        ) AS age_on_period_end
+    FROM tmp.work_person_filter_source AS s
+    CROSS JOIN tmp.calc_periods AS cp
+    WHERE s.in_dt <= addDays(cp.dt_to, -1)
+      AND ifNull(s.out_dt, today()) >= addDays(cp.dt_to, -1)
+) AS src
+GROUP BY
+    real_region_smo_cd,
+    real_profile_cd,
+    real_dn_group_cd,
+    f_y,
+    f_q,
+    real_smo,
+    real_mo;
+
+
+TRUNCATE TABLE cube.work;
+INSERT INTO cube.work2
+(
+    f_region_smo_cd,
+    f_profile_cd,
+    f_dn_group_cd,
+    f_y,
+    f_q,
+    f_smo,
+    f_mo,
+    worker_count_v,
+    worker_percent_v,
+    notwork_count_v,
+    notwork_percent_v,
+    zl_on_dn_total,
+    insert_dttm,
+    update_dttm
+)
+SELECT
+    f_region_smo_cd,
+    f_profile_cd,
+    f_dn_group_cd,
+    f_y,
+    f_q,
+    f_smo,
+    f_mo,
+    worker_count_v,
+    toDecimal64(ifNull(round(worker_count_v * 100.0 / nullIf(zl_on_dn_total, 0), 2), 0), 2) AS worker_percent_v,
+    notwork_count_v,
+    toDecimal64(ifNull(round(notwork_count_v * 100.0 / nullIf(zl_on_dn_total, 0), 2), 0), 2) AS notwork_percent_v,
+    zl_on_dn_total,
+    now64(3, 'Europe/Moscow') AS insert_dttm,
+    now64(3, 'Europe/Moscow') AS update_dttm
+FROM tmp.work_detail;
+INSERT INTO tmp.work_cube_agg
+SELECT
+    if(bitTest(mask, 0), '0', f_region_smo_cd) AS f_region_smo_cd,
+    if(bitTest(mask, 1), '0', f_profile_cd) AS f_profile_cd,
+    if(bitTest(mask, 2), '0', f_dn_group_cd) AS f_dn_group_cd,
+    if(bitTest(mask, 3), 0, f_y) AS f_y,
+    if(bitTest(mask, 4), 0, f_q) AS f_q,
+    if(bitTest(mask, 5), '0', f_smo) AS f_smo,
+    if(bitTest(mask, 6), '0', f_mo) AS f_mo,
+    sum(zl_on_dn_total) AS zl_on_dn_total,
+    sum(worker_count_v) AS worker_count_v,
+    sum(notwork_count_v) AS notwork_count_v
+FROM tmp.work_detail
+ARRAY JOIN range(128) AS mask
+GROUP BY
+    f_region_smo_cd,
+    f_profile_cd,
+    f_dn_group_cd,
+    f_y,
+    f_q,
+    f_smo,
+    f_mo
+HAVING NOT (f_q != 0 AND f_y = 0)
+   AND NOT (
+        zl_on_dn_total = 0
+        AND worker_count_v = 0
+        AND notwork_count_v = 0
+   );
+TRUNCATE TABLE cube.work;
+INSERT INTO cube.work
+(
+    f_region_smo_cd,
+    f_profile_cd,
+    f_dn_group_cd,
+    f_y,
+    f_q,
+    f_smo,
+    f_mo,
+    worker_count_v,
+    worker_percent_v,
+    notwork_count_v,
+    notwork_percent_v,
+    zl_on_dn_total,
+    insert_dttm,
+    update_dttm
+)
+SELECT
+    a.f_region_smo_cd,
+    a.f_profile_cd,
+    a.f_dn_group_cd,
+    a.f_y,
+    a.f_q,
+    a.f_smo,
+    a.f_mo,
+    a.worker_count_v,
+    toDecimal64(ifNull(round(a.worker_count_v * 100.0 / nullIf(a.zl_on_dn_total, 0), 2), 0), 2) AS worker_percent_v,
+    a.notwork_count_v,
+    toDecimal64(ifNull(round(a.notwork_count_v * 100.0 / nullIf(a.zl_on_dn_total, 0), 2), 0), 2) AS notwork_percent_v,
+    a.zl_on_dn_total,
+    now64(3, 'Europe/Moscow') AS insert_dttm,
+    now64(3, 'Europe/Moscow') AS update_dttm
+FROM tmp.work_cube_agg AS a
+LEFT JOIN cube.work AS w
+    ON  a.f_region_smo_cd = w.f_region_smo_cd
+    AND a.f_profile_cd = w.f_profile_cd
+    AND a.f_dn_group_cd = w.f_dn_group_cd
+    AND a.f_y = w.f_y
+    AND a.f_q = w.f_q
+    AND a.f_smo = w.f_smo
+    AND a.f_mo = w.f_mo
+WHERE w.f_region_smo_cd IS NULL;
+SELECT *
+FROM tmp.work_cube_agg
+WHERE
+    f_region_smo_cd = '0'
+ OR f_profile_cd = '0'
+ OR f_dn_group_cd = '0'
+ OR f_smo = '0'
+ OR f_mo = '0'
+LIMIT 10;
