@@ -1,0 +1,31 @@
+CREATE TABLE cube.work2
+(
+    `f_region_smo_cd` String,
+    `f_profile_cd` String,
+    `f_dn_group_cd` String,
+    `f_y` Int32,
+    `f_q` Int32,
+    `f_smo` String,
+    `f_mo` String,
+    `worker_count_v` UInt64,
+    `worker_percent_v` Decimal(18,
+ 2),
+    `notwork_count_v` UInt64,
+    `notwork_percent_v` Decimal(18,
+ 2),
+    `zl_on_dn_total` UInt64,
+    `insert_dttm` DateTime64(3,
+ 'Europe/Moscow'),
+    `update_dttm` DateTime64(3,
+ 'Europe/Moscow')
+)
+ENGINE = MergeTree
+ORDER BY (f_region_smo_cd,
+ f_profile_cd,
+ f_dn_group_cd,
+ f_y,
+ f_q,
+ f_smo,
+ f_mo)
+SETTINGS index_granularity = 8192;
+
