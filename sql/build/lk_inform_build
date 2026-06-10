@@ -1,0 +1,101 @@
+INSERT INTO tmp.lk_person_source
+SELECT DISTINCT
+    di.mpioip,
+    if(ifNull(di.smo_cd, '') = '', '0', substring(di.smo_cd, 1, 2)) AS region_smo_cd,
+    toString(ifNull(di.profile_cd, 0)) AS profile_cd,
+    toString(ifNull(di.group_cd, 0)) AS dn_group_cd,
+    if(ifNull(di.smo_cd, '') = '', '0', di.smo_cd) AS smo_cd,
+    if(ifNull(di.attach_mo_cd, '') = '', '0', di.attach_mo_cd) AS mo_cd
+FROM stage.disp_info di
+WHERE di.in_dt <= :end_date
+  AND (di.out_dt >= :start_date OR di.out_dt IS NULL)
+  AND di.profile_cd IS NOT NULL AND di.profile_cd != -1;
+
+
+INSERT INTO tmp.lk_last_login
+SELECT
+    mpioip,
+    max(last_login_dt) AS last_login_dt
+FROM stage.lk_inform
+WHERE last_login_dt < :end_date    -- только логины до конца периода
+GROUP BY mpioip;
+
+
+INSERT INTO tmp.lk_detail
+SELECT
+    s.region_smo_cd,
+    s.profile_cd,
+    s.dn_group_cd,
+    s.smo_cd,
+    s.mo_cd,
+    uniqExact(s.mpioip) AS total,
+    uniqExactIf(s.mpioip, l.mpioip IS NOT NULL) AS using_lk,
+    uniqExactIf(s.mpioip, l.last_login_dt >= addMonths(:end_date, -3)) AS using_lk_last_m,
+    uniqExactIf(s.mpioip, l.last_login_dt >= addMonths(:end_date, -12)) AS using_lk_last_y
+FROM tmp.lk_person_source s
+LEFT JOIN tmp.lk_last_login l ON l.mpioip = s.mpioip
+GROUP BY s.region_smo_cd, s.profile_cd, s.dn_group_cd, s.smo_cd, s.mo_cd;
+
+
+INSERT INTO tmp.lk_cube_agg
+SELECT
+    if(bitTest(mask, 0), '0', f_region_smo_cd) AS f_region_smo_cd,
+    if(bitTest(mask, 1), '0', f_profile_cd) AS f_profile_cd,
+    if(bitTest(mask, 2), '0', f_dn_group_cd) AS f_dn_group_cd,
+    if(bitTest(mask, 3), '0', f_smo) AS f_smo,
+    if(bitTest(mask, 4), '0', f_mo) AS f_mo,
+    sum(total) AS total,
+    sum(using_lk) AS using_lk,
+    sum(using_lk_last_m) AS using_lk_last_m,
+    sum(using_lk_last_y) AS using_lk_last_y
+FROM tmp.lk_detail
+ARRAY JOIN range(32) AS mask
+GROUP BY
+    f_region_smo_cd,
+    f_profile_cd,
+    f_dn_group_cd,
+    f_smo,
+    f_mo
+HAVING NOT (total = 0 AND using_lk = 0 AND using_lk_last_m = 0 AND using_lk_last_y = 0);
+
+
+INSERT INTO cube.lk_inform
+(
+    f_region_smo_cd,
+    f_profile_cd,
+    f_dn_group_cd,
+    f_smo,
+    f_mo,
+    total,
+    using_lk,
+    using_lk_percent,
+    using_lk_last_m,
+    using_lk_last_m_percent,
+    using_lk_last_y,
+    using_lk_last_y_percent,
+    insert_dttm,
+    update_dttm
+)
+SELECT
+    a.f_region_smo_cd,
+    a.f_profile_cd,
+    a.f_dn_group_cd,
+    a.f_smo,
+    a.f_mo,
+    a.total,
+    a.using_lk,
+    toDecimal64(ifNull(round(a.using_lk * 100.0 / nullIf(a.total, 0), 2), 0), 2) AS using_lk_percent,
+    a.using_lk_last_m,
+    toDecimal64(ifNull(round(a.using_lk_last_m * 100.0 / nullIf(a.total, 0), 2), 0), 2) AS using_lk_last_m_percent,
+    a.using_lk_last_y,
+    toDecimal64(ifNull(round(a.using_lk_last_y * 100.0 / nullIf(a.total, 0), 2), 0), 2) AS using_lk_last_y_percent,
+    now64(3, 'Europe/Moscow') AS insert_dttm,
+    now64(3, 'Europe/Moscow') AS update_dttm
+FROM tmp.lk_cube_agg AS a
+LEFT JOIN cube.lk_inform AS w
+    ON  a.f_region_smo_cd = w.f_region_smo_cd
+    AND a.f_profile_cd = w.f_profile_cd
+    AND a.f_dn_group_cd = w.f_dn_group_cd
+    AND a.f_smo = w.f_smo
+    AND a.f_mo = w.f_mo
+WHERE w.f_region_smo_cd IS NULL;
