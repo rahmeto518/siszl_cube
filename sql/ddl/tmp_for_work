@@ -1,0 +1,75 @@
+CREATE TABLE tmp.work_detail
+(
+    f_region_smo_cd String,
+    f_profile_cd String,
+    f_dn_group_cd String,
+    f_y Int32,
+    f_q Int32,
+    f_smo String,
+    f_mo String,
+    zl_on_dn_total UInt64,
+    worker_count_v UInt64,
+    notwork_count_v UInt64
+)
+ENGINE = MergeTree
+ORDER BY
+(
+    f_region_smo_cd,
+    f_profile_cd,
+    f_dn_group_cd,
+    f_y,
+    f_q,
+    f_smo,
+    f_mo
+);
+
+
+CREATE TABLE tmp.work_cube_agg
+(
+    f_region_smo_cd String,
+    f_profile_cd String,
+    f_dn_group_cd String,
+    f_y Int32,
+    f_q Int32,
+    f_smo String,
+    f_mo String,
+    zl_on_dn_total UInt64,
+    worker_count_v UInt64,
+    notwork_count_v UInt64
+)
+ENGINE = MergeTree
+ORDER BY
+(
+    f_region_smo_cd,
+    f_profile_cd,
+    f_dn_group_cd,
+    f_y,
+    f_q,
+    f_smo,
+    f_mo
+);
+
+
+CREATE TABLE IF NOT EXISTS tmp.work_person_filter_source
+(
+    mpioip String,
+    in_dt Date,
+    out_dt Nullable(Date),
+    birth_dt Date,
+    pol_cd Int64,
+    real_region_smo_cd String,
+    real_profile_cd String,
+    real_dn_group_cd String,
+    real_smo String,
+    real_mo String
+)
+ENGINE = MergeTree
+ORDER BY
+(
+    mpioip,
+    real_region_smo_cd,
+    real_profile_cd,
+    real_dn_group_cd,
+    real_smo,
+    real_mo
+);
