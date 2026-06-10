@@ -1,0 +1,20 @@
+CREATE TABLE IF NOT EXISTS cube.lk_inform
+(
+    f_region_smo_cd String,
+    f_profile_cd String,
+    f_dn_group_cd String,
+    f_smo String,
+    f_mo String,
+    total UInt64,
+    using_lk UInt64,
+    using_lk_percent Decimal(18,2),
+    using_lk_last_m UInt64,
+    using_lk_last_m_percent Decimal(18,2),
+    using_lk_last_y UInt64,
+    using_lk_last_y_percent Decimal(18,2),
+    insert_dttm DateTime64(3, 'Europe/Moscow'),
+    update_dttm DateTime64(3, 'Europe/Moscow')
+)
+ENGINE = MergeTree
+ORDER BY (f_region_smo_cd, f_profile_cd, f_dn_group_cd, f_smo, f_mo)
+SETTINGS index_granularity = 8192;
