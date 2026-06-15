@@ -4,24 +4,45 @@
 
 ## Назначение
 
--   преобразование данных raw-слоя в предметные сущности;
--   нормализация атрибутов;
--   удаление дублей;
--   подготовка данных для построения кубов.
+Stage-слой предназначен для:
+
+- преобразования данных raw-слоя в предметные сущности;
+- нормализации атрибутов;
+- удаления дублей;
+- подготовки данных для дальнейшего расчета кубов.
 
 ## Реализованные таблицы
 
--   stage.event_task
--   stage.dispans_person
--   stage.disp_info
--   stage.task_usl
--   stage.dispensary_plan
--   stage.inform_task
--   stage.inform_rslt
--   stage.lk_inform
+| Stage таблица | Источник |
+|---------------|----------|
+| stage.event_task | raw.event_task |
+| stage.dispans_person | raw.event_insured_person + raw.event_mo_attachment + raw.event_oms_policy |
+| stage.disp_info | raw.event_dispensary_episode |
+| stage.task_usl | raw.event_task |
+| stage.dispensary_plan | raw.event_dispensary_plan |
+| stage.inform_task | raw.dn_inform_task |
+| stage.inform_rslt | raw.dn_inform_rslt |
+| stage.lk_inform | raw.person_info |
 
 ## Структура каталога
 
--   ddl.sql --- CREATE TABLE для stage-таблиц;
--   mapping.md --- описание маппинга raw → stage;
--   sql/\* --- INSERT-скрипты наполнения.
+```text
+raw_to_stage/
+├── README.md
+├── ddl.sql
+├── mapping.md
+└── sql/
+    ├── 01_event_task.sql
+    ├── 02_dispans_person.sql
+    ├── 03_disp_info.sql
+    ├── 04_task_usl.sql
+    ├── 05_dispensary_plan.sql
+    ├── 06_inform_task.sql
+    ├── 07_inform_rslt.sql
+    └── 08_lk_inform.sql
+```
+
+## Порядок запуска
+
+1. Выполнить `ddl.sql`.
+2. Выполнить INSERT-скрипты из каталога `sql/` по порядку.
