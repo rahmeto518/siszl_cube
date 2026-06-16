@@ -1,0 +1,1468 @@
+1. basic_metrics
+1.1.TRUNCATE TABLE tmp.for_basic_metrics;
+
+INSERT INTO tmp.for_basic_metrics
+SELECT
+    di.id AS disp_id,
+    di.mpioip,
+    di.group_cd,
+    di.ds_cd,
+    di.in_dt,
+    di.out_dt,
+    p.enp,
+    p.birth_dt,
+    p.death_dt,
+    p.pol_cd,
+    p.ok_region_cd,
+    p.smo_region_cd,
+    p.smo_cd,
+    p.attach_mo_cd,
+    t.task_id,
+    dp.plan_id,
+    dp.profile_cd,
+    t.task_status_cd,
+    t.event_type_cd,
+    t.task_start,
+    t.task_end,
+    t.closed_dt,
+    t.insert_dttm,
+    t.update_dttm
+FROM stage.disp_info di
+LEFT JOIN stage.dispensary_plan dp
+    ON dp.episod_id = toString(di.id)
+LEFT JOIN stage.event_task t
+    ON t.plan_id = dp.plan_id
+LEFT JOIN stage.dispans_person p
+    ON p.mpioip = di.mpioip;
+
+1.2. TRUNCATE TABLE tmp.dim_basic_filters;
+
+INSERT INTO tmp.dim_basic_filters
+SELECT DISTINCT
+    if(ifNull(smo_cd, '') = '', '0', substring(smo_cd, 1, 2)) AS f_region_smo_cd,
+    toString(ifNull(profile_cd, 0)) AS f_profile_cd,
+    toString(ifNull(group_cd, 0)) AS f_dn_group_cd,
+    toYear(in_dt) AS f_y,
+    0 AS f_q,
+    if(ifNull(smo_cd, '') = '', '0', smo_cd) AS f_smo,
+    if(ifNull(attach_mo_cd, '') = '', '0', attach_mo_cd) AS f_mo
+FROM tmp.for_basic_metrics;
+
+1.3. TRUNCATE TABLE cube.basic_metrics;
+
+INSERT INTO cube.basic_metrics
+SELECT
+    f.f_region_smo_cd,
+    f.f_profile_cd,
+    f.f_dn_group_cd,
+    f.f_y,
+    f.f_q,
+    f.f_smo,
+    f.f_mo,
+    uniqExact(x.disp_id) AS sl_dn_cnt,
+    uniqExactIf(x.mpioip, x.out_dt IS NULL) AS zl_on_dn_total,
+    uniqExactIf(x.mpioip, x.death_dt IS NOT NULL) AS death_new,
+    uniqExactIf(x.task_id, x.task_id IS NOT NULL AND x.task_status_cd != 5) AS all_tasks,
+    uniqExactIf(x.task_id, x.task_id IS NOT NULL AND x.task_status_cd IN (1,2)) AS main_execution
+FROM tmp.dim_basic_filters f
+INNER JOIN
+(
+    SELECT
+        if(bitTest(mask,0),'0',if(ifNull(smo_cd,'')='','0',substring(smo_cd,1,2))) AS f_region_smo_cd,
+        if(bitTest(mask,1),'0',toString(ifNull(profile_cd,0))) AS f_profile_cd,
+        if(bitTest(mask,2),'0',toString(ifNull(group_cd,0))) AS f_dn_group_cd,
+        toYear(in_dt) AS f_y,
+        0 AS f_q,
+        if(bitTest(mask,3),'0',if(ifNull(smo_cd,'')='','0',smo_cd)) AS f_smo,
+        if(bitTest(mask,4),'0',if(ifNull(attach_mo_cd,'')='','0',attach_mo_cd)) AS f_mo,
+        disp_id,
+        mpioip,
+        out_dt,
+        death_dt,
+        task_id,
+        task_status_cd
+    FROM tmp.for_basic_metrics
+    ARRAY JOIN range(32) AS mask
+) x
+ON  x.f_region_smo_cd = f.f_region_smo_cd
+AND x.f_profile_cd = f.f_profile_cd
+AND x.f_dn_group_cd = f.f_dn_group_cd
+AND x.f_y = f.f_y
+AND x.f_q = f.f_q
+AND x.f_smo = f.f_smo
+AND x.f_mo = f.f_mo
+GROUP BY
+    f.f_region_smo_cd,
+    f.f_profile_cd,
+    f.f_dn_group_cd,
+    f.f_y,
+    f.f_q,
+    f.f_smo,
+    f.f_mo;
+2.RISK
+2.1 TRUNCATE TABLE tmp.calc_periods;
+
+INSERT INTO tmp.calc_periods
+SELECT
+    yy.y AS f_y,
+    qq.q AS f_q,
+    if(qq.q = 0,
+        toDate(concat(toString(yy.y), '-01-01')),
+        toStartOfQuarter(toDate(concat(toString(yy.y), '-', toString((qq.q - 1) * 3 + 1), '-01')))
+    ) AS dt_from,
+    if(qq.q = 0,
+        toDate(concat(toString(yy.y + 1), '-01-01')),
+        addMonths(toStartOfQuarter(toDate(concat(toString(yy.y), '-', toString((qq.q - 1) * 3 + 1), '-01'))), 3)
+    ) AS dt_to
+FROM (SELECT arrayJoin(range(2019,2028)) AS y) yy
+CROSS JOIN (SELECT arrayJoin(range(0,5)) AS q) qq;
+2.2 TRUNCATE TABLE tmp.risk_period_source;
+
+INSERT INTO tmp.risk_period_source
+SELECT
+    cp.f_y,
+    cp.f_q,
+    r.mpioip,
+    r.risk_id,
+    argMax(r.risk_level_id, tuple(r.risk_dt, r.risk_level_id)) AS risk_level_id,
+    max(r.risk_dt) AS risk_dt
+FROM stage.risk r
+CROSS JOIN tmp.calc_periods cp
+WHERE r.risk_dt >= cp.dt_from
+  AND r.risk_dt < cp.dt_to
+GROUP BY
+    cp.f_y,
+    cp.f_q,
+    r.mpioip,
+    r.risk_id;
+2.3. TRUNCATE TABLE tmp.risk_precalc;
+
+INSERT INTO tmp.risk_precalc
+SELECT
+    r.f_y,
+    r.f_q,
+    r.mpioip,
+    r.risk_id,
+    r.risk_level_id,
+    r.risk_dt,
+    p.pol_cd,
+    dateDiff('year', p.birth_dt,
+        if(r.f_q = 0,
+            toDate(concat(toString(r.f_y), '-12-31')),
+            addDays(addMonths(toStartOfQuarter(toDate(concat(toString(r.f_y), '-', toString((r.f_q - 1)*3 + 1), '-01'))),3),-1)
+        )
+    ) AS age_on_period_end,
+    if(ifNull(p.smo_cd,'')='','0',substring(p.smo_cd,1,2)) AS region_smo_cd,
+    toString(any(profile_cd)) AS profile_cd,
+    toString(any(group_cd)) AS group_cd,
+    p.smo_cd,
+    p.attach_mo_cd AS mo_cd
+FROM tmp.risk_period_source r
+LEFT JOIN stage.dispans_person p ON p.mpioip = r.mpioip
+LEFT JOIN tmp.for_basic_metrics bm ON bm.mpioip = r.mpioip
+GROUP BY
+    r.f_y, r.f_q, r.mpioip, r.risk_id, r.risk_level_id, r.risk_dt,
+    p.pol_cd, p.birth_dt, p.smo_cd, p.attach_mo_cd;
+2.4. TRUNCATE TABLE tmp.dim_risk_filters;
+
+INSERT INTO tmp.dim_risk_filters
+SELECT DISTINCT
+    if(bitTest(mask,0),'0',b.f_region_smo_cd),
+    if(bitTest(mask,1),'0',b.f_profile_cd),
+    if(bitTest(mask,2),'0',b.f_dn_group_cd),
+    b.f_y,
+    b.f_q,
+    if(bitTest(mask,3),'0',b.f_smo),
+    if(bitTest(mask,4),'0',b.f_mo)
+FROM
+(
+    SELECT DISTINCT
+        if(ifNull(region_smo_cd,'')='','0',region_smo_cd) AS f_region_smo_cd,
+        if(ifNull(profile_cd,'')='','0',profile_cd) AS f_profile_cd,
+        if(ifNull(group_cd,'')='','0',group_cd) AS f_dn_group_cd,
+        f_y,f_q,
+        if(ifNull(smo_cd,'')='','0',smo_cd) AS f_smo,
+        if(ifNull(mo_cd,'')='','0',mo_cd) AS f_mo
+    FROM tmp.risk_precalc
+) b
+CROSS JOIN (SELECT arrayJoin(range(32)) AS mask);
+
+2.5. INSERT INTO cube.risk_final
+SELECT
+    f_region_smo_cd,
+    f_profile_cd,
+    f_dn_group_cd,
+    f_y,
+    f_q,
+    f_smo,
+    f_mo,
+    risk_id,
+    countV,
+    countGtAverageV,
+    mCountV,
+    wCountV,
+    m1839V,
+    toUInt8(if(m_max = 0, m1839_p,
+        if(m1839_p = m_max, 100 - m4065_p - mOver65_p, m1839_p)
+    )) AS m1839_percent,
+    m4065V,
+    toUInt8(if(m_max = 0, m4065_p,
+        if(m1839_p != m_max AND m4065_p = m_max, 100 - m1839_p - mOver65_p, m4065_p)
+    )) AS m4065_percent,
+    mOver65V,
+    toUInt8(if(m_max = 0, mOver65_p,
+        if(m1839_p != m_max AND m4065_p != m_max AND mOver65_p = m_max, 100 - m1839_p - m4065_p, mOver65_p)
+    )) AS mOver65_percent,
+    w1839V,
+    toUInt8(if(w_max = 0, w1839_p,
+        if(w1839_p = w_max, 100 - w4060_p - wOver60_p, w1839_p)
+    )) AS w1839_percent,
+    w4060V,
+    toUInt8(if(w_max = 0, w4060_p,
+        if(w1839_p != w_max AND w4060_p = w_max, 100 - w1839_p - wOver60_p, w4060_p)
+    )) AS w4060_percent,
+    wOver60V,
+    toUInt8(if(w_max = 0, wOver60_p,
+        if(w1839_p != w_max AND w4060_p != w_max AND wOver60_p = w_max, 100 - w1839_p - w4060_p, wOver60_p)
+    )) AS wOver60_percent,
+    mCountGtAverageV,
+    wCountGtAverageV,
+    m1839GtAverageV,
+    toUInt8(if(m_gt_max = 0, m1839_gt_p,
+        if(m1839_gt_p = m_gt_max, 100 - m4065_gt_p - mOver65_gt_p, m1839_gt_p)
+    )) AS m1839GtAverage_percent,
+    m4065GtAverageV,
+    toUInt8(if(m_gt_max = 0, m4065_gt_p,
+        if(m1839_gt_p != m_gt_max AND m4065_gt_p = m_gt_max, 100 - m1839_gt_p - mOver65_gt_p, m4065_gt_p)
+    )) AS m4065GtAverage_percent,
+    mOver65GtAverageV,
+    toUInt8(if(m_gt_max = 0, mOver65_gt_p,
+        if(m1839_gt_p != m_gt_max AND m4065_gt_p != m_gt_max AND mOver65_gt_p = m_gt_max, 100 - m1839_gt_p - m4065_gt_p, mOver65_gt_p)
+    )) AS mOver65GtAverage_percent,
+    w1839GtAverageV,
+    toUInt8(if(w_gt_max = 0, w1839_gt_p,
+        if(w1839_gt_p = w_gt_max, 100 - w4060_gt_p - wOver60_gt_p, w1839_gt_p)
+    )) AS w1839GtAverage_percent,
+    w4060GtAverageV,
+    toUInt8(if(w_gt_max = 0, w4060_gt_p,
+        if(w1839_gt_p != w_gt_max AND w4060_gt_p = w_gt_max, 100 - w1839_gt_p - wOver60_gt_p, w4060_gt_p)
+    )) AS w4060GtAverage_percent,
+    wOver60GtAverageV,
+    toUInt8(if(w_gt_max = 0, wOver60_gt_p,
+        if(w1839_gt_p != w_gt_max AND w4060_gt_p != w_gt_max AND wOver60_gt_p = w_gt_max, 100 - w1839_gt_p - w4060_gt_p, wOver60_gt_p)
+    )) AS wOver60GtAverage_percent,
+    lowV,
+    toUInt8(if(lah_max = 0, low_p,
+        if(low_p = lah_max, 100 - average_p - high_p, low_p)
+    )) AS low_percent,
+    averageV,
+    toUInt8(if(lah_max = 0, average_p,
+        if(low_p != lah_max AND average_p = lah_max, 100 - low_p - high_p, average_p)
+    )) AS average_percent,
+    highV,
+    toUInt8(if(lah_max = 0, high_p,
+        if(low_p != lah_max AND average_p != lah_max AND high_p = lah_max, 100 - low_p - average_p, high_p)
+    )) AS high_percent
+FROM
+(
+    SELECT
+        *,
+        greatest(m1839_p, m4065_p, mOver65_p) AS m_max,
+        greatest(w1839_p, w4060_p, wOver60_p) AS w_max,
+        greatest(m1839_gt_p, m4065_gt_p, mOver65_gt_p) AS m_gt_max,
+        greatest(w1839_gt_p, w4060_gt_p, wOver60_gt_p) AS w_gt_max,
+        greatest(low_p, average_p, high_p) AS lah_max
+    FROM
+    (
+        SELECT
+            *,
+            toInt32(ifNull(round(m1839V * 100 / nullIf(mCountV, 0)), 0)) AS m1839_p,
+			toInt32(ifNull(round(m4065V * 100 / nullIf(mCountV, 0)), 0)) AS m4065_p,
+			toInt32(ifNull(round(mOver65V * 100 / nullIf(mCountV, 0)), 0)) AS mOver65_p,
+			toInt32(ifNull(round(w1839V * 100 / nullIf(wCountV, 0)), 0)) AS w1839_p,
+			toInt32(ifNull(round(w4060V * 100 / nullIf(wCountV, 0)), 0)) AS w4060_p,
+			toInt32(ifNull(round(wOver60V * 100 / nullIf(wCountV, 0)), 0)) AS wOver60_p,
+			toInt32(ifNull(round(m1839GtAverageV * 100 / nullIf(mCountGtAverageV, 0)), 0)) AS m1839_gt_p,
+			toInt32(ifNull(round(m4065GtAverageV * 100 / nullIf(mCountGtAverageV, 0)), 0)) AS m4065_gt_p,
+			toInt32(ifNull(round(mOver65GtAverageV * 100 / nullIf(mCountGtAverageV, 0)), 0)) AS mOver65_gt_p,
+			toInt32(ifNull(round(w1839GtAverageV * 100 / nullIf(wCountGtAverageV, 0)), 0)) AS w1839_gt_p,
+			toInt32(ifNull(round(w4060GtAverageV * 100 / nullIf(wCountGtAverageV, 0)), 0)) AS w4060_gt_p,
+			toInt32(ifNull(round(wOver60GtAverageV * 100 / nullIf(wCountGtAverageV, 0)), 0)) AS wOver60_gt_p,
+			toInt32(ifNull(round(lowV * 100 / nullIf(countV, 0)), 0)) AS low_p,
+			toInt32(ifNull(round(averageV * 100 / nullIf(countV, 0)), 0)) AS average_p,
+			toInt32(ifNull(round(highV * 100 / nullIf(countV, 0)), 0)) AS high_p
+        FROM
+        (
+            SELECT
+                f.f_region_smo_cd,
+                f.f_profile_cd,
+                f.f_dn_group_cd,
+                f.f_y,
+                f.f_q,
+                f.f_smo,
+                f.f_mo,
+                x.risk_id,
+                count() AS countV,
+                countIf(x.risk_level_id > 3) AS countGtAverageV,
+                countIf(x.pol_cd = 1) AS mCountV,
+                countIf(x.pol_cd = 2) AS wCountV,
+                countIf(x.pol_cd = 1 AND x.age_on_period_end BETWEEN 18 AND 39) AS m1839V,
+                countIf(x.pol_cd = 1 AND x.age_on_period_end BETWEEN 40 AND 65) AS m4065V,
+                countIf(x.pol_cd = 1 AND x.age_on_period_end >= 66) AS mOver65V,
+                countIf(x.pol_cd = 2 AND x.age_on_period_end BETWEEN 18 AND 39) AS w1839V,
+                countIf(x.pol_cd = 2 AND x.age_on_period_end BETWEEN 40 AND 60) AS w4060V,
+                countIf(x.pol_cd = 2 AND x.age_on_period_end >= 61) AS wOver60V,
+                countIf(x.pol_cd = 1 AND x.risk_level_id > 3) AS mCountGtAverageV,
+                countIf(x.pol_cd = 2 AND x.risk_level_id > 3) AS wCountGtAverageV,
+                countIf(x.pol_cd = 1 AND x.risk_level_id > 3 AND x.age_on_period_end BETWEEN 18 AND 39) AS m1839GtAverageV,
+                countIf(x.pol_cd = 1 AND x.risk_level_id > 3 AND x.age_on_period_end BETWEEN 40 AND 65) AS m4065GtAverageV,
+                countIf(x.pol_cd = 1 AND x.risk_level_id > 3 AND x.age_on_period_end >= 66) AS mOver65GtAverageV,
+                countIf(x.pol_cd = 2 AND x.risk_level_id > 3 AND x.age_on_period_end BETWEEN 18 AND 39) AS w1839GtAverageV,
+                countIf(x.pol_cd = 2 AND x.risk_level_id > 3 AND x.age_on_period_end BETWEEN 40 AND 60) AS w4060GtAverageV,
+                countIf(x.pol_cd = 2 AND x.risk_level_id > 3 AND x.age_on_period_end >= 61) AS wOver60GtAverageV,
+                countIf(x.risk_level_id < 3) AS lowV,
+                countIf(x.risk_level_id = 3) AS averageV,
+                countIf(x.risk_level_id > 3) AS highV
+            FROM tmp.dim_risk_filters AS f
+            INNER JOIN
+            (
+                SELECT
+                    f_y,
+                    f_q,
+                    if(bitTest(mask, 0), '0', if(ifNull(region_smo_cd, '') = '', '0', region_smo_cd)) AS f_region_smo_cd,
+                    if(bitTest(mask, 1), '0', if(ifNull(profile_cd, '') = '', '0', profile_cd)) AS f_profile_cd,
+                    if(bitTest(mask, 2), '0', if(ifNull(group_cd, '') = '', '0', group_cd)) AS f_dn_group_cd,
+                    if(bitTest(mask, 3), '0', if(ifNull(smo_cd, '') = '', '0', smo_cd)) AS f_smo,
+                    if(bitTest(mask, 4), '0', if(ifNull(mo_cd, '') = '', '0', mo_cd)) AS f_mo,
+                    risk_id,
+                    risk_level_id,
+                    pol_cd,
+                    age_on_period_end
+                FROM tmp.risk_precalc
+                ARRAY JOIN range(32) AS mask
+            ) AS x
+                ON  x.f_region_smo_cd = f.f_region_smo_cd
+                AND x.f_profile_cd = f.f_profile_cd
+                AND x.f_dn_group_cd = f.f_dn_group_cd
+                AND x.f_y = f.f_y
+                AND x.f_q = f.f_q
+                AND x.f_smo = f.f_smo
+                AND x.f_mo = f.f_mo
+            GROUP BY
+                f.f_region_smo_cd,
+                f.f_profile_cd,
+                f.f_dn_group_cd,
+                f.f_y,
+                f.f_q,
+                f.f_smo,
+                f.f_mo,
+                x.risk_id
+        )
+    )
+);
+3.DONE
+3.1 TRUNCATE TABLE tmp.done_task_month_source;
+
+INSERT INTO tmp.done_task_month_source
+SELECT DISTINCT
+    task_id,
+    task_status_cd,
+    assumeNotNull(closed_dt) AS closed_dt,
+    toYear(assumeNotNull(closed_dt)) AS closed_y,
+    toQuarter(assumeNotNull(closed_dt)) AS closed_q,
+    toMonth(assumeNotNull(closed_dt)) AS closed_m,
+    if(ifNull(smo_cd, '') = '', '0', substring(smo_cd, 1, 2)) AS region_smo_cd,
+    toString(ifNull(profile_cd, 0)) AS profile_cd,
+    toString(ifNull(group_cd, 0)) AS dn_group_cd,
+    if(ifNull(smo_cd, '') = '', '0', smo_cd) AS smo_cd,
+    if(ifNull(attach_mo_cd, '') = '', '0', attach_mo_cd) AS mo_cd
+FROM tmp.for_basic_metrics
+WHERE task_id IS NOT NULL
+  AND closed_dt IS NOT NULL
+  AND task_status_cd IN (1, 2)
+  AND toYear(assumeNotNull(closed_dt)) BETWEEN 2018 AND 2027;
+
+3.2 TRUNCATE TABLE cube.done;
+
+INSERT INTO cube.done
+WITH prepared AS
+(
+    SELECT
+        if(bitTest(mask, 0), '0', region_smo_cd) AS f_region_smo_cd,
+        if(bitTest(mask, 1), '0', profile_cd) AS f_profile_cd,
+        if(bitTest(mask, 2), '0', dn_group_cd) AS f_dn_group_cd,
+        if(metric_kind = 'p', closed_y + 1, closed_y) AS f_y,
+        closed_q AS f_q,
+        if(bitTest(mask, 3), '0', smo_cd) AS f_smo,
+        if(bitTest(mask, 4), '0', mo_cd) AS f_mo,
+        metric_kind,
+        task_id,
+        task_status_cd,
+        closed_m
+    FROM tmp.done_task_month_source
+    CROSS JOIN
+    (
+        SELECT arrayJoin(['p', 'c']) AS metric_kind
+    ) AS k
+    CROSS JOIN
+    (
+        SELECT arrayJoin(range(32)) AS mask
+    ) AS m
+    WHERE if(metric_kind = 'p', closed_y + 1, closed_y) BETWEEN 2019 AND 2027
+)
+SELECT
+    f_region_smo_cd,
+    f_profile_cd,
+    f_dn_group_cd,
+    f_y,
+    f_q,
+    f_smo,
+    f_mo,
+    uniqExactIf(task_id, metric_kind = 'p' AND task_status_cd = 1 AND closed_m = 1) AS p_done_m1_v,
+    uniqExactIf(task_id, metric_kind = 'p' AND task_status_cd = 2 AND closed_m = 1) AS p_assumpt_m1_v,
+    uniqExactIf(task_id, metric_kind = 'c' AND task_status_cd = 1 AND closed_m = 1) AS c_done_m1_v,
+    uniqExactIf(task_id, metric_kind = 'c' AND task_status_cd = 2 AND closed_m = 1) AS c_assumpt_m1_v,
+    uniqExactIf(task_id, metric_kind = 'p' AND task_status_cd = 1 AND closed_m = 2) AS p_done_m2_v,
+    uniqExactIf(task_id, metric_kind = 'p' AND task_status_cd = 2 AND closed_m = 2) AS p_assumpt_m2_v,
+    uniqExactIf(task_id, metric_kind = 'c' AND task_status_cd = 1 AND closed_m = 2) AS c_done_m2_v,
+    uniqExactIf(task_id, metric_kind = 'c' AND task_status_cd = 2 AND closed_m = 2) AS c_assumpt_m2_v,
+    uniqExactIf(task_id, metric_kind = 'p' AND task_status_cd = 1 AND closed_m = 3) AS p_done_m3_v,
+    uniqExactIf(task_id, metric_kind = 'p' AND task_status_cd = 2 AND closed_m = 3) AS p_assumpt_m3_v,
+    uniqExactIf(task_id, metric_kind = 'c' AND task_status_cd = 1 AND closed_m = 3) AS c_done_m3_v,
+    uniqExactIf(task_id, metric_kind = 'c' AND task_status_cd = 2 AND closed_m = 3) AS c_assumpt_m3_v,
+    uniqExactIf(task_id, metric_kind = 'p' AND task_status_cd = 1 AND closed_m = 4) AS p_done_m4_v,
+    uniqExactIf(task_id, metric_kind = 'p' AND task_status_cd = 2 AND closed_m = 4) AS p_assumpt_m4_v,
+    uniqExactIf(task_id, metric_kind = 'c' AND task_status_cd = 1 AND closed_m = 4) AS c_done_m4_v,
+    uniqExactIf(task_id, metric_kind = 'c' AND task_status_cd = 2 AND closed_m = 4) AS c_assumpt_m4_v,
+    uniqExactIf(task_id, metric_kind = 'p' AND task_status_cd = 1 AND closed_m = 5) AS p_done_m5_v,
+    uniqExactIf(task_id, metric_kind = 'p' AND task_status_cd = 2 AND closed_m = 5) AS p_assumpt_m5_v,
+    uniqExactIf(task_id, metric_kind = 'c' AND task_status_cd = 1 AND closed_m = 5) AS c_done_m5_v,
+    uniqExactIf(task_id, metric_kind = 'c' AND task_status_cd = 2 AND closed_m = 5) AS c_assumpt_m5_v,
+    uniqExactIf(task_id, metric_kind = 'p' AND task_status_cd = 1 AND closed_m = 6) AS p_done_m6_v,
+    uniqExactIf(task_id, metric_kind = 'p' AND task_status_cd = 2 AND closed_m = 6) AS p_assumpt_m6_v,
+    uniqExactIf(task_id, metric_kind = 'c' AND task_status_cd = 1 AND closed_m = 6) AS c_done_m6_v,
+    uniqExactIf(task_id, metric_kind = 'c' AND task_status_cd = 2 AND closed_m = 6) AS c_assumpt_m6_v,
+    uniqExactIf(task_id, metric_kind = 'p' AND task_status_cd = 1 AND closed_m = 7) AS p_done_m7_v,
+    uniqExactIf(task_id, metric_kind = 'p' AND task_status_cd = 2 AND closed_m = 7) AS p_assumpt_m7_v,
+    uniqExactIf(task_id, metric_kind = 'c' AND task_status_cd = 1 AND closed_m = 7) AS c_done_m7_v,
+    uniqExactIf(task_id, metric_kind = 'c' AND task_status_cd = 2 AND closed_m = 7) AS c_assumpt_m7_v,
+    uniqExactIf(task_id, metric_kind = 'p' AND task_status_cd = 1 AND closed_m = 8) AS p_done_m8_v,
+    uniqExactIf(task_id, metric_kind = 'p' AND task_status_cd = 2 AND closed_m = 8) AS p_assumpt_m8_v,
+    uniqExactIf(task_id, metric_kind = 'c' AND task_status_cd = 1 AND closed_m = 8) AS c_done_m8_v,
+    uniqExactIf(task_id, metric_kind = 'c' AND task_status_cd = 2 AND closed_m = 8) AS c_assumpt_m8_v,
+    uniqExactIf(task_id, metric_kind = 'p' AND task_status_cd = 1 AND closed_m = 9) AS p_done_m9_v,
+    uniqExactIf(task_id, metric_kind = 'p' AND task_status_cd = 2 AND closed_m = 9) AS p_assumpt_m9_v,
+    uniqExactIf(task_id, metric_kind = 'c' AND task_status_cd = 1 AND closed_m = 9) AS c_done_m9_v,
+    uniqExactIf(task_id, metric_kind = 'c' AND task_status_cd = 2 AND closed_m = 9) AS c_assumpt_m9_v,
+    uniqExactIf(task_id, metric_kind = 'p' AND task_status_cd = 1 AND closed_m = 10) AS p_done_m10_v,
+    uniqExactIf(task_id, metric_kind = 'p' AND task_status_cd = 2 AND closed_m = 10) AS p_assumpt_m10_v,
+    uniqExactIf(task_id, metric_kind = 'c' AND task_status_cd = 1 AND closed_m = 10) AS c_done_m10_v,
+    uniqExactIf(task_id, metric_kind = 'c' AND task_status_cd = 2 AND closed_m = 10) AS c_assumpt_m10_v,
+    uniqExactIf(task_id, metric_kind = 'p' AND task_status_cd = 1 AND closed_m = 11) AS p_done_m11_v,
+    uniqExactIf(task_id, metric_kind = 'p' AND task_status_cd = 2 AND closed_m = 11) AS p_assumpt_m11_v,
+    uniqExactIf(task_id, metric_kind = 'c' AND task_status_cd = 1 AND closed_m = 11) AS c_done_m11_v,
+    uniqExactIf(task_id, metric_kind = 'c' AND task_status_cd = 2 AND closed_m = 11) AS c_assumpt_m11_v,
+    uniqExactIf(task_id, metric_kind = 'p' AND task_status_cd = 1 AND closed_m = 12) AS p_done_m12_v,
+    uniqExactIf(task_id, metric_kind = 'p' AND task_status_cd = 2 AND closed_m = 12) AS p_assumpt_m12_v,
+    uniqExactIf(task_id, metric_kind = 'c' AND task_status_cd = 1 AND closed_m = 12) AS c_done_m12_v,
+    uniqExactIf(task_id, metric_kind = 'c' AND task_status_cd = 2 AND closed_m = 12) AS c_assumpt_m12_v,
+    now64(3, 'Europe/Moscow') AS insert_dttm,
+    now64(3, 'Europe/Moscow') AS update_dttm
+FROM prepared
+GROUP BY
+    f_region_smo_cd,
+    f_profile_cd,
+    f_dn_group_cd,
+    f_y,
+    f_q,
+    f_smo,
+    f_mo
+HAVING
+    (p_done_m1_v +
+        p_assumpt_m1_v +
+        c_done_m1_v +
+        c_assumpt_m1_v +
+        p_done_m2_v +
+        p_assumpt_m2_v +
+        c_done_m2_v +
+        c_assumpt_m2_v +
+        p_done_m3_v +
+        p_assumpt_m3_v +
+        c_done_m3_v +
+        c_assumpt_m3_v +
+        p_done_m4_v +
+        p_assumpt_m4_v +
+        c_done_m4_v +
+        c_assumpt_m4_v +
+        p_done_m5_v +
+        p_assumpt_m5_v +
+        c_done_m5_v +
+        c_assumpt_m5_v +
+        p_done_m6_v +
+        p_assumpt_m6_v +
+        c_done_m6_v +
+        c_assumpt_m6_v +
+        p_done_m7_v +
+        p_assumpt_m7_v +
+        c_done_m7_v +
+        c_assumpt_m7_v +
+        p_done_m8_v +
+        p_assumpt_m8_v +
+        c_done_m8_v +
+        c_assumpt_m8_v +
+        p_done_m9_v +
+        p_assumpt_m9_v +
+        c_done_m9_v +
+        c_assumpt_m9_v +
+        p_done_m10_v +
+        p_assumpt_m10_v +
+        c_done_m10_v +
+        c_assumpt_m10_v +
+        p_done_m11_v +
+        p_assumpt_m11_v +
+        c_done_m11_v +
+        c_assumpt_m11_v +
+        p_done_m12_v +
+        p_assumpt_m12_v +
+        c_done_m12_v +
+        c_assumpt_m12_v) <> 0;
+4.STATUS_EVENT
+4.1 TRUNCATE TABLE tmp.statusevent_task_agg;
+
+INSERT INTO tmp.statusevent_task_agg
+SELECT
+    if(bitTest(mask, 0), '0', real_region_smo_cd) AS f_region_smo_cd,
+    if(bitTest(mask, 1), '0', real_profile_cd) AS f_profile_cd,
+    if(bitTest(mask, 2), '0', real_dn_group_cd) AS f_dn_group_cd,
+    f_y,
+    f_q,
+    if(bitTest(mask, 3), '0', real_smo) AS f_smo,
+    if(bitTest(mask, 4), '0', real_mo) AS f_mo,
+    task_status_cd,
+    uniqExact(task_id) AS task_cnt
+FROM
+(
+    SELECT DISTINCT
+        cp.f_y,
+        cp.f_q,
+        if(ifNull(t.smo_cd, '') = '', '0', substring(t.smo_cd, 1, 2)) AS real_region_smo_cd,
+        toString(ifNull(t.profile_cd, 0)) AS real_profile_cd,
+        toString(ifNull(t.group_cd, 0)) AS real_dn_group_cd,
+        if(ifNull(t.smo_cd, '') = '', '0', t.smo_cd) AS real_smo,
+        if(ifNull(t.attach_mo_cd, '') = '', '0', t.attach_mo_cd) AS real_mo,
+        t.task_id,
+        t.task_status_cd
+    FROM tmp.for_basic_metrics AS t
+    CROSS JOIN tmp.calc_periods AS cp
+    WHERE t.task_id IS NOT NULL
+      AND t.task_status_cd IN (1, 2, 3, 4)
+      AND ifNull(t.closed_dt, toDate(now('Europe/Moscow'))) >= cp.dt_from
+      AND ifNull(t.closed_dt, toDate(now('Europe/Moscow'))) < cp.dt_to
+) AS src
+ARRAY JOIN range(32) AS mask
+GROUP BY
+    f_region_smo_cd,
+    f_profile_cd,
+    f_dn_group_cd,
+    f_y,
+    f_q,
+    f_smo,
+    f_mo,
+    task_status_cd;
+
+4.2 TRUNCATE TABLE cube.statusevent;
+
+INSERT INTO cube.statusevent
+(
+    f_region_smo_cd,
+    f_profile_cd,
+    f_dn_group_cd,
+    f_y,
+    f_q,
+    f_smo,
+    f_mo,
+    done_task_count_v,
+    done_task_percent_v,
+    assumpt_task_count_v,
+    assumpt_task_percent_v,
+    plan_task_count_v,
+    plan_task_percent_v,
+    failed_task_count_v,
+    failed_task_percent_v,
+    all_tasks,
+    insert_dttm,
+    update_dttm
+)
+SELECT
+    f_region_smo_cd,
+    f_profile_cd,
+    f_dn_group_cd,
+    f_y,
+    f_q,
+    f_smo,
+    f_mo,
+    done_task_count_v,
+    toDecimal64(ifNull(round(done_task_count_v * 100.0 / nullIf(all_tasks, 0), 2), 0), 2) AS done_task_percent_v,
+    assumpt_task_count_v,
+    toDecimal64(ifNull(round(assumpt_task_count_v * 100.0 / nullIf(all_tasks, 0), 2), 0), 2) AS assumpt_task_percent_v,
+    plan_task_count_v,
+    toDecimal64(ifNull(round(plan_task_count_v * 100.0 / nullIf(all_tasks, 0), 2), 0), 2) AS plan_task_percent_v,
+    failed_task_count_v,
+    toDecimal64(ifNull(round(failed_task_count_v * 100.0 / nullIf(all_tasks, 0), 2), 0), 2) AS failed_task_percent_v,
+    all_tasks,
+    now64(3, 'Europe/Moscow') AS insert_dttm,
+    now64(3, 'Europe/Moscow') AS update_dttm
+FROM
+(
+    SELECT
+        f_region_smo_cd,
+        f_profile_cd,
+        f_dn_group_cd,
+        f_y,
+        f_q,
+        f_smo,
+        f_mo,
+        sumIf(task_cnt, task_status_cd = 1) AS done_task_count_v,
+        sumIf(task_cnt, task_status_cd = 2) AS assumpt_task_count_v,
+        sumIf(task_cnt, task_status_cd = 4) AS plan_task_count_v,
+        sumIf(task_cnt, task_status_cd = 3) AS failed_task_count_v,
+        sum(task_cnt) AS all_tasks
+    FROM tmp.statusevent_task_agg
+    GROUP BY
+        f_region_smo_cd,
+        f_profile_cd,
+        f_dn_group_cd,
+        f_y,
+        f_q,
+        f_smo,
+        f_mo
+)
+WHERE all_tasks > 0;
+
+5. attendance(observed)
+5.1 INSERT INTO tmp.for_attendance
+SELECT
+    mpioip,
+    in_dt,
+    out_dt,
+    death_dt,          -- теперь это поле есть в tmp.for_basic_metrics
+    birth_dt,
+    task_id,
+    task_status_cd,
+    task_end,
+    closed_dt,
+    if(ifNull(smo_cd, '') = '', '0', substring(smo_cd, 1, 2)) AS f_region_smo_cd,
+    if(ifNull(profile_cd, 0) = 0, '0', toString(profile_cd)) AS f_profile_cd,
+    if(ifNull(group_cd, 0) = 0, '0', toString(group_cd)) AS f_dn_group_cd,
+    toYear(in_dt) AS f_y,
+    0 AS f_q,
+    if(ifNull(smo_cd, '') = '', '0', smo_cd) AS f_smo,
+    if(ifNull(attach_mo_cd, '') = '', '0', attach_mo_cd) AS f_mo
+FROM tmp.for_basic_metrics;
+5.2 INSERT INTO tmp.dim_attendance_filters
+SELECT DISTINCT
+    f_region_smo_cd,
+    f_profile_cd,
+    f_dn_group_cd,
+    f_y,
+    f_q,
+    f_smo,
+    f_mo
+FROM tmp.for_attendance;
+5.3 
+TRUNCATE TABLE cube.attendance;
+
+INSERT INTO cube.attendance
+SELECT
+    f.f_region_smo_cd,
+    f.f_profile_cd,
+    f.f_dn_group_cd,
+    f.f_y,
+    f.f_q,
+    f.f_smo,
+    f.f_mo,
+    sum(x.total_flag) AS total,
+    sum(x.not_observed_flag) AS not_observed,
+    round(100.0 * sum(x.not_observed_flag) / nullIf(sum(x.total_flag), 0), 2) AS not_observed_percent,
+    sum(x.observed_over_2_y_flag) AS observed_over_2_y,
+    round(100.0 * sum(x.observed_over_2_y_flag) / nullIf(sum(x.total_flag), 0), 2) AS observed_over_2_y_percent,
+    sum(x.observed_over_1_y_flag) AS observed_over_1_y,
+    round(100.0 * sum(x.observed_over_1_y_flag) / nullIf(sum(x.total_flag), 0), 2) AS observed_over_1_y_percent,
+    sum(x.timely_visits_flag) AS timely_visits,
+    round(100.0 * sum(x.timely_visits_flag) / nullIf(sum(x.total_flag), 0), 2) AS timely_visits_percent
+FROM tmp.dim_attendance_filters f
+INNER JOIN
+(
+    SELECT
+        if(bitTest(mask, 0), '0', f_region_smo_cd) AS f_region_smo_cd,
+        if(bitTest(mask, 1), '0', f_profile_cd) AS f_profile_cd,
+        if(bitTest(mask, 2), '0', f_dn_group_cd) AS f_dn_group_cd,
+        f_y,
+        f_q,
+        if(bitTest(mask, 3), '0', f_smo) AS f_smo,
+        if(bitTest(mask, 4), '0', f_mo) AS f_mo,
+        mpioip,
+        1 AS total_flag,
+        CASE WHEN task_status_cd NOT IN (1,2) OR task_status_cd IS NULL THEN 1 ELSE 0 END AS not_observed_flag,
+        CASE WHEN greatest(task_end, closed_dt) < addYears(toDate(concat(toString(f_y), '-01-01')), -2) THEN 1 ELSE 0 END AS observed_over_2_y_flag,
+        CASE WHEN greatest(task_end, closed_dt) >= addYears(toDate(concat(toString(f_y), '-01-01')), -2)
+              AND greatest(task_end, closed_dt) < addYears(toDate(concat(toString(f_y), '-01-01')), -1) THEN 1 ELSE 0 END AS observed_over_1_y_flag,
+        CASE WHEN greatest(task_end, closed_dt) >= addYears(toDate(concat(toString(f_y), '-01-01')), -1) THEN 1 ELSE 0 END AS timely_visits_flag
+    FROM tmp.for_attendance
+    ARRAY JOIN range(32) AS mask
+) x
+ON  x.f_region_smo_cd = f.f_region_smo_cd
+AND x.f_profile_cd = f.f_profile_cd
+AND x.f_dn_group_cd = f.f_dn_group_cd
+AND x.f_y = f.f_y
+AND x.f_q = f.f_q
+AND x.f_smo = f.f_smo
+AND x.f_mo = f.f_mo
+GROUP BY
+    f.f_region_smo_cd,
+    f.f_profile_cd,
+    f.f_dn_group_cd,
+    f.f_y,
+    f.f_q,
+    f.f_smo,
+    f.f_mo
+HAVING total > 0;
+6. profile
+5.1 TRUNCATE TABLE tmp.profile_task_agg;
+
+INSERT INTO tmp.profile_task_agg
+SELECT
+    if(bitTest(mask, 0), '0', real_region_smo_cd) AS f_region_smo_cd,
+    if(bitTest(mask, 1), '0', real_profile_cd) AS f_profile_cd,
+    if(bitTest(mask, 2), '0', real_dn_group_cd) AS f_dn_group_cd,
+    f_y,
+    f_q,
+    if(bitTest(mask, 3), '0', real_smo) AS f_smo,
+    if(bitTest(mask, 4), '0', real_mo) AS f_mo,
+    profile_cd,
+    task_status_cd,
+    uniqExact(task_id) AS task_cnt
+FROM
+(
+    SELECT DISTINCT
+        cp.f_y,
+        cp.f_q,
+
+        if(ifNull(t.smo_cd, '') = '', '0', substring(t.smo_cd, 1, 2)) AS real_region_smo_cd,
+        toString(ifNull(t.profile_cd, 0)) AS real_profile_cd,
+        toString(ifNull(t.group_cd, 0)) AS real_dn_group_cd,
+        if(ifNull(t.smo_cd, '') = '', '0', t.smo_cd) AS real_smo,
+        if(ifNull(t.attach_mo_cd, '') = '', '0', t.attach_mo_cd) AS real_mo,
+
+        t.task_id,
+        t.task_status_cd,
+        t.profile_cd
+    FROM tmp.for_basic_metrics AS t
+    CROSS JOIN tmp.calc_periods AS cp
+    WHERE t.task_id IS NOT NULL
+      AND t.profile_cd IN (29, 60, 122)
+      AND t.task_start < cp.dt_to
+      AND t.task_end >= cp.dt_from
+) AS src
+ARRAY JOIN range(32) AS mask
+GROUP BY
+    f_region_smo_cd,
+    f_profile_cd,
+    f_dn_group_cd,
+    f_y,
+    f_q,
+    f_smo,
+    f_mo,
+    profile_cd,
+    task_status_cd;
+5.2. profile_task_agg 
+??? 
+
+5.3 TRUNCATE TABLE cube.profile;
+
+INSERT INTO cube.profile
+(
+    f_region_smo_cd,
+    f_profile_cd,
+    f_dn_group_cd,
+    f_y,
+    f_q,
+    f_smo,
+    f_mo,
+
+    bsk_tasks_count_v,
+    zno_tasks_count_v,
+
+    bsk_done_task_count_v,
+    bsk_done_task_percent_v,
+    bsk_assumpt_task_count_v,
+    bsk_assumpt_task_percent_v,
+    bsk_plan_task_count_v,
+    bsk_plan_task_percent_v,
+    bsk_failed_task_count_v,
+    bsk_failed_task_percent_v,
+
+    zno_done_task_count_v,
+    zno_done_task_percent_v,
+    zno_assumpt_task_count_v,
+    zno_assumpt_task_percent_v,
+    zno_plan_task_count_v,
+    zno_plan_task_percent_v,
+    zno_failed_task_count_v,
+    zno_failed_task_percent_v,
+
+    endo_tasks_count_v,
+    endo_done_task_count_v,
+    endo_done_task_percent_v,
+    endo_assumpt_task_count_v,
+    endo_assumpt_task_percent_v,
+    endo_plan_task_count_v,
+    endo_plan_task_percent_v,
+    endo_failed_task_count_v,
+    endo_failed_task_percent_v,
+
+    insert_dttm,
+    update_dttm
+)
+SELECT
+    f_region_smo_cd,
+    f_profile_cd,
+    f_dn_group_cd,
+    f_y,
+    f_q,
+    f_smo,
+    f_mo,
+
+    bsk_tasks_count_v,
+    zno_tasks_count_v,
+
+    bsk_done_task_count_v,
+    toDecimal64(ifNull(round(bsk_done_task_count_v * 100.0 / nullIf(bsk_tasks_count_v, 0), 2), 0), 2) AS bsk_done_task_percent_v,
+
+    bsk_assumpt_task_count_v,
+    toDecimal64(ifNull(round(bsk_assumpt_task_count_v * 100.0 / nullIf(bsk_tasks_count_v, 0), 2), 0), 2) AS bsk_assumpt_task_percent_v,
+
+    bsk_plan_task_count_v,
+    toDecimal64(ifNull(round(bsk_plan_task_count_v * 100.0 / nullIf(bsk_tasks_count_v, 0), 2), 0), 2) AS bsk_plan_task_percent_v,
+
+    bsk_failed_task_count_v,
+    toDecimal64(ifNull(round(bsk_failed_task_count_v * 100.0 / nullIf(bsk_tasks_count_v, 0), 2), 0), 2) AS bsk_failed_task_percent_v,
+
+    zno_done_task_count_v,
+    toDecimal64(ifNull(round(zno_done_task_count_v * 100.0 / nullIf(zno_tasks_count_v, 0), 2), 0), 2) AS zno_done_task_percent_v,
+
+    zno_assumpt_task_count_v,
+    toDecimal64(ifNull(round(zno_assumpt_task_count_v * 100.0 / nullIf(zno_tasks_count_v, 0), 2), 0), 2) AS zno_assumpt_task_percent_v,
+
+    zno_plan_task_count_v,
+    toDecimal64(ifNull(round(zno_plan_task_count_v * 100.0 / nullIf(zno_tasks_count_v, 0), 2), 0), 2) AS zno_plan_task_percent_v,
+
+    zno_failed_task_count_v,
+    toDecimal64(ifNull(round(zno_failed_task_count_v * 100.0 / nullIf(zno_tasks_count_v, 0), 2), 0), 2) AS zno_failed_task_percent_v,
+
+    endo_tasks_count_v,
+
+    endo_done_task_count_v,
+    toDecimal64(ifNull(round(endo_done_task_count_v * 100.0 / nullIf(endo_tasks_count_v, 0), 2), 0), 2) AS endo_done_task_percent_v,
+
+    endo_assumpt_task_count_v,
+    toDecimal64(ifNull(round(endo_assumpt_task_count_v * 100.0 / nullIf(endo_tasks_count_v, 0), 2), 0), 2) AS endo_assumpt_task_percent_v,
+
+    endo_plan_task_count_v,
+    toDecimal64(ifNull(round(endo_plan_task_count_v * 100.0 / nullIf(endo_tasks_count_v, 0), 2), 0), 2) AS endo_plan_task_percent_v,
+
+    endo_failed_task_count_v,
+    toDecimal64(ifNull(round(endo_failed_task_count_v * 100.0 / nullIf(endo_tasks_count_v, 0), 2), 0), 2) AS endo_failed_task_percent_v,
+
+    now64(3, 'Europe/Moscow') AS insert_dttm,
+    now64(3, 'Europe/Moscow') AS update_dttm
+FROM
+(
+    SELECT
+        f_region_smo_cd,
+        f_profile_cd,
+        f_dn_group_cd,
+        f_y,
+        f_q,
+        f_smo,
+        f_mo,
+
+        sumIf(task_cnt, profile_cd = 29) AS bsk_tasks_count_v,
+        sumIf(task_cnt, profile_cd = 60) AS zno_tasks_count_v,
+
+        sumIf(task_cnt, profile_cd = 29 AND task_status_cd = 1) AS bsk_done_task_count_v,
+        sumIf(task_cnt, profile_cd = 29 AND task_status_cd = 2) AS bsk_assumpt_task_count_v,
+        sumIf(task_cnt, profile_cd = 29 AND task_status_cd = 4) AS bsk_plan_task_count_v,
+        sumIf(task_cnt, profile_cd = 29 AND task_status_cd = 3) AS bsk_failed_task_count_v,
+
+        sumIf(task_cnt, profile_cd = 60 AND task_status_cd = 1) AS zno_done_task_count_v,
+        sumIf(task_cnt, profile_cd = 60 AND task_status_cd = 2) AS zno_assumpt_task_count_v,
+        sumIf(task_cnt, profile_cd = 60 AND task_status_cd = 4) AS zno_plan_task_count_v,
+        sumIf(task_cnt, profile_cd = 60 AND task_status_cd = 3) AS zno_failed_task_count_v,
+
+        sumIf(task_cnt, profile_cd = 122) AS endo_tasks_count_v,
+        sumIf(task_cnt, profile_cd = 122 AND task_status_cd = 1) AS endo_done_task_count_v,
+        sumIf(task_cnt, profile_cd = 122 AND task_status_cd = 2) AS endo_assumpt_task_count_v,
+        sumIf(task_cnt, profile_cd = 122 AND task_status_cd = 4) AS endo_plan_task_count_v,
+        sumIf(task_cnt, profile_cd = 122 AND task_status_cd = 3) AS endo_failed_task_count_v
+    FROM tmp.profile_task_agg
+    GROUP BY
+        f_region_smo_cd,
+        f_profile_cd,
+        f_dn_group_cd,
+        f_y,
+        f_q,
+        f_smo,
+        f_mo
+);
+6. work2
+6.1. INSERT INTO tmp.work_person_filter_source
+SELECT DISTINCT
+    mpioip,
+    in_dt,
+    out_dt,
+    birth_dt,
+    pol_cd,
+    if(ifNull(smo_cd, '') = '', '0', substring(smo_cd, 1, 2)) AS real_region_smo_cd,
+    toString(ifNull(profile_cd, 0)) AS real_profile_cd,
+    toString(ifNull(group_cd, 0)) AS real_dn_group_cd,
+    if(ifNull(smo_cd, '') = '', '0', smo_cd) AS real_smo,
+    if(ifNull(attach_mo_cd, '') = '', '0', attach_mo_cd) AS real_mo
+FROM tmp.for_basic_metrics
+WHERE mpioip IS NOT NULL
+  AND birth_dt IS NOT NULL;
+INSERT INTO tmp.work_detail
+SELECT
+    real_region_smo_cd AS f_region_smo_cd,
+    real_profile_cd AS f_profile_cd,
+    real_dn_group_cd AS f_dn_group_cd,
+    f_y,
+    f_q,
+    real_smo AS f_smo,
+    real_mo AS f_mo,
+    uniqExactIf(mpioip, out_dt IS NULL) AS zl_on_dn_total,
+    uniqExactIf(
+        mpioip,
+        out_dt IS NULL
+        AND (
+            (pol_cd = 1 AND age_on_period_end < 65)
+            OR
+            (pol_cd = 2 AND age_on_period_end < 60)
+        )
+    ) AS worker_count_v,
+    uniqExactIf(
+        mpioip,
+        out_dt IS NULL
+        AND (
+            (pol_cd = 1 AND age_on_period_end >= 65)
+            OR
+            (pol_cd = 2 AND age_on_period_end >= 60)
+        )
+    ) AS notwork_count_v
+FROM
+(
+    SELECT
+        s.*,
+        cp.f_y,
+        cp.f_q,
+        cp.dt_to,
+        greatest(
+            0,
+            dateDiff('year', s.birth_dt, addDays(cp.dt_to, -1))
+            - if(
+                formatDateTime(addDays(cp.dt_to, -1), '%m%d')
+                < formatDateTime(s.birth_dt, '%m%d'),
+                1,
+                0
+            )
+        ) AS age_on_period_end
+    FROM tmp.work_person_filter_source AS s
+    CROSS JOIN tmp.calc_periods AS cp
+    WHERE s.in_dt <= addDays(cp.dt_to, -1)
+      AND ifNull(s.out_dt, today()) >= addDays(cp.dt_to, -1)
+) AS src
+GROUP BY
+    real_region_smo_cd,
+    real_profile_cd,
+    real_dn_group_cd,
+    f_y,
+    f_q,
+    real_smo,
+    real_mo;
+6.2. work_cube_agg
+INSERT INTO tmp.work_cube_agg
+SELECT
+    if(bitTest(mask, 0), '0', f_region_smo_cd) AS f_region_smo_cd,
+    if(bitTest(mask, 1), '0', f_profile_cd) AS f_profile_cd,
+    if(bitTest(mask, 2), '0', f_dn_group_cd) AS f_dn_group_cd,
+    if(bitTest(mask, 3), 0, f_y) AS f_y,
+    if(bitTest(mask, 4), 0, f_q) AS f_q,
+    if(bitTest(mask, 5), '0', f_smo) AS f_smo,
+    if(bitTest(mask, 6), '0', f_mo) AS f_mo,
+    sum(zl_on_dn_total) AS zl_on_dn_total,
+    sum(worker_count_v) AS worker_count_v,
+    sum(notwork_count_v) AS notwork_count_v
+FROM tmp.work_detail
+ARRAY JOIN range(128) AS mask
+GROUP BY
+    f_region_smo_cd,
+    f_profile_cd,
+    f_dn_group_cd,
+    f_y,
+    f_q,
+    f_smo,
+    f_mo
+HAVING NOT (f_q != 0 AND f_y = 0)
+   AND NOT (
+        zl_on_dn_total = 0
+        AND worker_count_v = 0
+        AND notwork_count_v = 0
+   );
+6.3. work_detail
+INSERT INTO tmp.work_detail
+SELECT
+    real_region_smo_cd AS f_region_smo_cd,
+    real_profile_cd AS f_profile_cd,
+    real_dn_group_cd AS f_dn_group_cd,
+    f_y,
+    f_q,
+    real_smo AS f_smo,
+    real_mo AS f_mo,
+    uniqExactIf(mpioip, out_dt IS NULL) AS zl_on_dn_total,
+    uniqExactIf(
+        mpioip,
+        out_dt IS NULL
+        AND (
+            (pol_cd = 1 AND age_on_period_end < 65)
+            OR
+            (pol_cd = 2 AND age_on_period_end < 60)
+        )
+    ) AS worker_count_v,
+    uniqExactIf(
+        mpioip,
+        out_dt IS NULL
+        AND (
+            (pol_cd = 1 AND age_on_period_end >= 65)
+            OR
+            (pol_cd = 2 AND age_on_period_end >= 60)
+        )
+    ) AS notwork_count_v
+FROM
+(
+    SELECT
+        s.*,
+        cp.f_y,
+        cp.f_q,
+        cp.dt_to,
+        greatest(
+            0,
+            dateDiff('year', s.birth_dt, addDays(cp.dt_to, -1))
+            - if(
+                formatDateTime(addDays(cp.dt_to, -1), '%m%d')
+                < formatDateTime(s.birth_dt, '%m%d'),
+                1,
+                0
+            )
+        ) AS age_on_period_end
+    FROM tmp.work_person_filter_source AS s
+    CROSS JOIN tmp.calc_periods AS cp
+    WHERE s.in_dt <= addDays(cp.dt_to, -1)
+      AND ifNull(s.out_dt, today()) >= addDays(cp.dt_to, -1)
+) AS src
+GROUP BY
+    real_region_smo_cd,
+    real_profile_cd,
+    real_dn_group_cd,
+    f_y,
+    f_q,
+    real_smo,
+    real_mo;
+6.4 tmp.work_person_base
+INSERT INTO tmp.work_person_base
+SELECT DISTINCT
+tupleElement(period_tuple, 1) AS f_y,
+tupleElement(period_tuple, 2) AS f_q,
+real_region_smo_cd,
+real_profile_cd,
+real_dn_group_cd,
+real_smo,
+real_mo,
+mpioip,
+if(
+(pol_cd = 1 AND age_on_period_end < 65)
+OR
+(pol_cd = 2 AND age_on_period_end < 60),
+1,
+0
+) AS is_worker,
+if(
+(pol_cd = 1 AND age_on_period_end >= 65)
+OR
+(pol_cd = 2 AND age_on_period_end >= 60),
+1,
+0
+) AS is_notwork
+FROM
+(
+SELECT
+s.*,
+period_tuple,
+greatest(
+0,
+dateDiff('year', birth_dt, tupleElement(period_tuple, 3))
+- if(
+formatDateTime(tupleElement(period_tuple, 3), '%m%d')
+< formatDateTime(birth_dt, '%m%d'),
+1,
+0
+)
+) AS age_on_period_end
+FROM tmp.work_person_filter_source AS s
+ARRAY JOIN arrayFilter(
+p -> tupleElement(p, 3) >= s.in_dt,
+arrayConcat(
+arrayMap(
+y -> tuple(
+toInt32(y),
+toInt32(0),
+toDate(concat(toString(y), '-12-31'))
+),
+range(2019, 2028)
+),
+arrayMap(
+n -> tuple(
+toInt32(toYear(addMonths(toDate('2019-01-01'), n * 3))),
+toInt32(toQuarter(addMonths(toDate('2019-01-01'), n * 3))),
+addDays(addMonths(toDate('2019-01-01'), n * 3 + 3), -1)
+),
+range(36)
+)
+)
+) AS period_tuple
+);
+6.5 TRUNCATE TABLE cube.work;
+INSERT INTO cube.work
+(
+    f_region_smo_cd,
+    f_profile_cd,
+    f_dn_group_cd,
+    f_y,
+    f_q,
+    f_smo,
+    f_mo,
+    worker_count_v,
+    worker_percent_v,
+    notwork_count_v,
+    notwork_percent_v,
+    zl_on_dn_total,
+    insert_dttm,
+    update_dttm
+)
+SELECT
+    a.f_region_smo_cd,
+    a.f_profile_cd,
+    a.f_dn_group_cd,
+    a.f_y,
+    a.f_q,
+    a.f_smo,
+    a.f_mo,
+    a.worker_count_v,
+    toDecimal64(ifNull(round(a.worker_count_v * 100.0 / nullIf(a.zl_on_dn_total, 0), 2), 0), 2) AS worker_percent_v,
+    a.notwork_count_v,
+    toDecimal64(ifNull(round(a.notwork_count_v * 100.0 / nullIf(a.zl_on_dn_total, 0), 2), 0), 2) AS notwork_percent_v,
+    a.zl_on_dn_total,
+    now64(3, 'Europe/Moscow') AS insert_dttm,
+    now64(3, 'Europe/Moscow') AS update_dttm
+FROM tmp.work_cube_agg AS a
+LEFT JOIN cube.work AS w
+    ON  a.f_region_smo_cd = w.f_region_smo_cd
+    AND a.f_profile_cd = w.f_profile_cd
+    AND a.f_dn_group_cd = w.f_dn_group_cd
+    AND a.f_y = w.f_y
+    AND a.f_q = w.f_q
+    AND a.f_smo = w.f_smo
+    AND a.f_mo = w.f_mo
+WHERE w.f_region_smo_cd IS NULL;
+SELECT *
+FROM tmp.work_cube_agg
+WHERE
+    f_region_smo_cd = '0'
+ OR f_profile_cd = '0'
+ OR f_dn_group_cd = '0'
+ OR f_smo = '0'
+ OR f_mo = '0'
+LIMIT 10;
+7-10 . rating_mo, rating_region, rating_smo
+7.1 INSERT INTO tmp.rating_task_base
+SELECT
+    rb.mpioip,
+    rb.disp_id,
+    rb.plan_id,
+    rb.profile_cd,
+    rb.group_cd,
+    rb.smo_region_cd AS region_smo_cd,
+    rb.smo_cd,
+    rb.disp_mo_cd AS mo_cd,
+    t.task_id,
+    t.task_status_cd,
+    t.task_start,
+    t.task_end,
+    t.closed_dt,
+    tu.usl_id
+FROM tmp.rating_base rb
+LEFT JOIN stage.event_task t
+    ON t.mpioip = rb.mpioip
+LEFT JOIN stage.task_usl tu
+    ON tu.task_id = t.task_id
+WHERE t.task_id IS NOT NULL;
+7.2. rating_base
+7.3 INSERT INTO precalc.rating_detail_part
+SELECT
+    cp.f_y,
+    cp.f_q,
+    if(bitTest(mask, 0), '0', region_smo_cd) AS f_region_smo_cd,
+    if(bitTest(mask, 1), '0', toString(profile_cd)) AS f_profile_cd,
+    if(bitTest(mask, 2), '0', toString(group_cd)) AS f_dn_group_cd,
+    if(bitTest(mask, 3), '0', smo_cd) AS f_smo,
+    if(bitTest(mask, 4), '0', mo_cd) AS f_mo,
+    region_smo_cd,
+    smo_cd,
+    mo_cd,
+    uniqExact(mpioip) AS insured_cnt,
+    uniqExact(disp_id) AS sl_dn_cnt,
+    toUInt64(0) AS all_tasks,
+    toUInt64(0) AS task_done_cnt,
+    toUInt64(0) AS charge_item_cnt
+FROM
+(
+    SELECT
+        mpioip,
+        disp_id,
+        profile_cd,
+        group_cd,
+        smo_region_cd AS region_smo_cd,
+        smo_cd,
+        disp_mo_cd AS mo_cd,
+        disp_in_dt,
+        disp_out_dt
+    FROM tmp.rating_base
+    WHERE mpioip IS NOT NULL
+      AND disp_id IS NOT NULL
+) rb
+CROSS JOIN
+(
+    SELECT *
+    FROM tmp.calc_periods
+    WHERE f_y = 2026
+) cp
+ARRAY JOIN range(32) AS mask
+WHERE rb.disp_in_dt < cp.dt_to
+  AND ifNull(rb.disp_out_dt, toDate('2100-01-01')) >= cp.dt_from
+GROUP BY
+    cp.f_y,
+    cp.f_q,
+    f_region_smo_cd,
+    f_profile_cd,
+    f_dn_group_cd,
+    f_smo,
+    f_mo,
+    region_smo_cd,
+    smo_cd,
+    mo_cd;
+
+
+7.4. INSERT INTO precalc.rating_detail
+(
+    f_y,
+    f_q,
+    f_region_smo_cd,
+    f_profile_cd,
+    f_dn_group_cd,
+    f_smo,
+    f_mo,
+    region_smo_cd,
+    smo_cd,
+    mo_cd,
+    insured_cnt,
+    sl_dn_cnt,
+    all_tasks,
+    task_done_cnt,
+    charge_item_cnt,
+    insert_dttm,
+    update_dttm
+)
+SELECT
+    f_y,
+    f_q,
+    f_region_smo_cd,
+    f_profile_cd,
+    f_dn_group_cd,
+    f_smo,
+    f_mo,
+    region_smo_cd,
+    smo_cd,
+    mo_cd,
+    sum(insured_cnt) AS insured_cnt,
+    sum(sl_dn_cnt) AS sl_dn_cnt,
+    sum(all_tasks) AS all_tasks,
+    sum(task_done_cnt) AS task_done_cnt,
+    sum(charge_item_cnt) AS charge_item_cnt,
+    now64(3, 'Europe/Moscow') AS insert_dttm,
+    now64(3, 'Europe/Moscow') AS update_dttm
+FROM precalc.rating_detail_part
+GROUP BY
+    f_y,
+    f_q,
+    f_region_smo_cd,
+    f_profile_cd,
+    f_dn_group_cd,
+    f_smo,
+    f_mo,
+    region_smo_cd,
+    smo_cd,
+    mo_cd;
+
+7.5 INSERT INTO cube.rating_region
+(
+    f_y,
+    f_q,
+    f_region_smo_cd,
+    f_profile_cd,
+    f_dn_group_cd,
+    f_smo,
+    f_mo,
+    region_smo_cd,
+    mo_cnt,
+    smo_cnt,
+    insured_cnt,
+    sl_dn_cnt,
+    all_tasks,
+    task_done_cnt,
+    task_done_prc,
+    charge_item_cnt,
+    insert_dttm,
+    update_dttm
+)
+SELECT
+    f_y,
+    f_q,
+    f_region_smo_cd,
+    f_profile_cd,
+    f_dn_group_cd,
+    f_smo,
+    f_mo,
+    region_smo_cd,
+    mo_cnt,
+    smo_cnt,
+    insured_cnt_sum,
+    sl_dn_cnt_sum,
+    all_tasks_sum,
+    task_done_cnt_sum,
+    toDecimal64(
+        ifNull(round(task_done_cnt_sum * 100.0 / nullIf(all_tasks_sum, 0), 2), 0),
+        2
+    ) AS task_done_prc,
+    charge_item_cnt_sum,
+    now64(3, 'Europe/Moscow'),
+    now64(3, 'Europe/Moscow')
+FROM
+(
+    SELECT
+        f_y,
+        f_q,
+        f_region_smo_cd,
+        f_profile_cd,
+        f_dn_group_cd,
+        f_smo,
+        f_mo,
+        region_smo_cd,
+        uniqExact(mo_cd) AS mo_cnt,
+        uniqExact(smo_cd) AS smo_cnt,
+        sum(insured_cnt) AS insured_cnt_sum,
+        sum(sl_dn_cnt) AS sl_dn_cnt_sum,
+        sum(all_tasks) AS all_tasks_sum,
+        sum(task_done_cnt) AS task_done_cnt_sum,
+        sum(charge_item_cnt) AS charge_item_cnt_sum
+    FROM precalc.rating_detail
+    GROUP BY
+        f_y,
+        f_q,
+        f_region_smo_cd,
+        f_profile_cd,
+        f_dn_group_cd,
+        f_smo,
+        f_mo,
+        region_smo_cd
+);
+
+7.6 INSERT INTO cube.rating_smo
+(
+    f_y, f_q, f_region_smo_cd, f_profile_cd, f_dn_group_cd, f_smo, f_mo,
+    smo_cd,
+    mo_cnt, insured_cnt, sl_dn_cnt, all_tasks, task_done_cnt,
+    task_done_prc, charge_item_cnt,
+    insert_dttm, update_dttm
+)
+SELECT
+    f_y, f_q, f_region_smo_cd, f_profile_cd, f_dn_group_cd, f_smo, f_mo,
+    smo_cd,
+    mo_cnt,
+    insured_cnt_sum,
+    sl_dn_cnt_sum,
+    all_tasks_sum,
+    task_done_cnt_sum,
+    toDecimal64(ifNull(round(task_done_cnt_sum * 100.0 / nullIf(all_tasks_sum, 0), 2), 0), 2),
+    charge_item_cnt_sum,
+    now64(3, 'Europe/Moscow'),
+    now64(3, 'Europe/Moscow')
+FROM
+(
+    SELECT
+        f_y, f_q, f_region_smo_cd, f_profile_cd, f_dn_group_cd, f_smo, f_mo,
+        smo_cd,
+        uniqExact(mo_cd) AS mo_cnt,
+        sum(insured_cnt) AS insured_cnt_sum,
+        sum(sl_dn_cnt) AS sl_dn_cnt_sum,
+        sum(all_tasks) AS all_tasks_sum,
+        sum(task_done_cnt) AS task_done_cnt_sum,
+        sum(charge_item_cnt) AS charge_item_cnt_sum
+    FROM precalc.rating_detail
+    GROUP BY
+        f_y, f_q, f_region_smo_cd, f_profile_cd, f_dn_group_cd, f_smo, f_mo,
+        smo_cd
+);
+
+7.6 INSERT INTO cube.rating_mo
+(
+    f_y, f_q, f_region_smo_cd, f_profile_cd, f_dn_group_cd, f_smo, f_mo,
+    mo_cd,
+    insured_cnt, sl_dn_cnt, all_tasks, task_done_cnt,
+    task_done_prc, charge_item_cnt,
+    insert_dttm, update_dttm
+)
+SELECT
+    f_y, f_q, f_region_smo_cd, f_profile_cd, f_dn_group_cd, f_smo, f_mo,
+    mo_cd,
+    insured_cnt_sum,
+    sl_dn_cnt_sum,
+    all_tasks_sum,
+    task_done_cnt_sum,
+    toDecimal64(ifNull(round(task_done_cnt_sum * 100.0 / nullIf(all_tasks_sum, 0), 2), 0), 2),
+    charge_item_cnt_sum,
+    now64(3, 'Europe/Moscow'),
+    now64(3, 'Europe/Moscow')
+FROM
+(
+    SELECT
+        f_y, f_q, f_region_smo_cd, f_profile_cd, f_dn_group_cd, f_smo, f_mo,
+        mo_cd,
+        sum(insured_cnt) AS insured_cnt_sum,
+        sum(sl_dn_cnt) AS sl_dn_cnt_sum,
+        sum(all_tasks) AS all_tasks_sum,
+        sum(task_done_cnt) AS task_done_cnt_sum,
+        sum(charge_item_cnt) AS charge_item_cnt_sum
+    FROM precalc.rating_detail
+    GROUP BY
+        f_y, f_q, f_region_smo_cd, f_profile_cd, f_dn_group_cd, f_smo, f_mo,
+        mo_cd
+);
