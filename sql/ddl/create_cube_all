@@ -1,0 +1,351 @@
+-- 1. attendance
+CREATE TABLE cube.attendance
+(
+    f_region_smo_cd        String,
+    f_profile_cd           String,
+    f_dn_group_cd          String,
+    f_y                    Int32,
+    f_q                    Int32,
+    f_smo                  String,
+    f_mo                   String,
+    total                  UInt64,
+    not_observed           UInt64,
+    not_observed_percent   Decimal(5,2),
+    observed_over_2_y      UInt64,
+    observed_over_2_y_percent Decimal(5,2),
+    observed_over_1_y      UInt64,
+    observed_over_1_y_percent Decimal(5,2),
+    timely_visits          UInt64,
+    timely_visits_percent  Decimal(5,2)
+)
+ENGINE = MergeTree
+ORDER BY (f_region_smo_cd, f_profile_cd, f_dn_group_cd, f_y, f_q, f_smo, f_mo)
+SETTINGS index_granularity = 8192;
+
+-- 2. basic_metrics
+CREATE TABLE cube.basic_metrics
+(
+    f_region_smo_cd String,
+    f_profile_cd    String,
+    f_dn_group_cd   String,
+    f_y             Int32,
+    f_q             Int32,
+    f_smo           String,
+    f_mo            String,
+    sl_dn_cnt       UInt64,
+    zl_on_dn_total  UInt64,
+    death_new       UInt64,
+    all_tasks       UInt64,
+    main_execution  UInt64
+)
+ENGINE = MergeTree
+ORDER BY (f_region_smo_cd, f_profile_cd, f_dn_group_cd, f_y, f_q, f_smo, f_mo)
+SETTINGS index_granularity = 8192;
+
+-- 3. done
+CREATE TABLE IF NOT EXISTS cube.done
+(
+    f_region_smo_cd  String,
+    f_profile_cd     String,
+    f_dn_group_cd    String,
+    f_y              Int32,
+    f_q              Int32,
+    f_smo            String,
+    f_mo             String,
+    p_done_m1_v      UInt64,
+    p_assumpt_m1_v   UInt64,
+    c_done_m1_v      UInt64,
+    c_assumpt_m1_v   UInt64,
+    p_done_m2_v      UInt64,
+    p_assumpt_m2_v   UInt64,
+    c_done_m2_v      UInt64,
+    c_assumpt_m2_v   UInt64,
+    p_done_m3_v      UInt64,
+    p_assumpt_m3_v   UInt64,
+    c_done_m3_v      UInt64,
+    c_assumpt_m3_v   UInt64,
+    p_done_m4_v      UInt64,
+    p_assumpt_m4_v   UInt64,
+    c_done_m4_v      UInt64,
+    c_assumpt_m4_v   UInt64,
+    p_done_m5_v      UInt64,
+    p_assumpt_m5_v   UInt64,
+    c_done_m5_v      UInt64,
+    c_assumpt_m5_v   UInt64,
+    p_done_m6_v      UInt64,
+    p_assumpt_m6_v   UInt64,
+    c_done_m6_v      UInt64,
+    c_assumpt_m6_v   UInt64,
+    p_done_m7_v      UInt64,
+    p_assumpt_m7_v   UInt64,
+    c_done_m7_v      UInt64,
+    c_assumpt_m7_v   UInt64,
+    p_done_m8_v      UInt64,
+    p_assumpt_m8_v   UInt64,
+    c_done_m8_v      UInt64,
+    c_assumpt_m8_v   UInt64,
+    p_done_m9_v      UInt64,
+    p_assumpt_m9_v   UInt64,
+    c_done_m9_v      UInt64,
+    c_assumpt_m9_v   UInt64,
+    p_done_m10_v     UInt64,
+    p_assumpt_m10_v  UInt64,
+    c_done_m10_v     UInt64,
+    c_assumpt_m10_v  UInt64,
+    p_done_m11_v     UInt64,
+    p_assumpt_m11_v  UInt64,
+    c_done_m11_v     UInt64,
+    c_assumpt_m11_v  UInt64,
+    p_done_m12_v     UInt64,
+    p_assumpt_m12_v  UInt64,
+    c_done_m12_v     UInt64,
+    c_assumpt_m12_v  UInt64,
+    insert_dttm      DateTime64(3, 'Europe/Moscow'),
+    update_dttm      DateTime64(3, 'Europe/Moscow')
+)
+ENGINE = MergeTree
+ORDER BY (f_y, f_q, f_region_smo_cd, f_profile_cd, f_dn_group_cd, f_smo, f_mo);
+
+-- 4. profile
+CREATE TABLE cube.profile
+(
+    f_region_smo_cd          String,
+    f_profile_cd             String,
+    f_dn_group_cd            String,
+    f_y                      Int32,
+    f_q                      Int32,
+    f_smo                    String,
+    f_mo                     String,
+    bsk_tasks_count_v        UInt64,
+    zno_tasks_count_v        UInt64,
+    bsk_done_task_count_v    UInt64,
+    bsk_done_task_percent_v  Decimal(18,2),
+    bsk_assumpt_task_count_v UInt64,
+    bsk_assumpt_task_percent_v Decimal(18,2),
+    bsk_plan_task_count_v    UInt64,
+    bsk_plan_task_percent_v  Decimal(18,2),
+    bsk_failed_task_count_v  UInt64,
+    bsk_failed_task_percent_v Decimal(18,2),
+    zno_done_task_count_v    UInt64,
+    zno_done_task_percent_v  Decimal(18,2),
+    zno_assumpt_task_count_v UInt64,
+    zno_assumpt_task_percent_v Decimal(18,2),
+    zno_plan_task_count_v    UInt64,
+    zno_plan_task_percent_v  Decimal(18,2),
+    zno_failed_task_count_v  UInt64,
+    zno_failed_task_percent_v Decimal(18,2),
+    endo_tasks_count_v       UInt64,
+    endo_done_task_count_v   UInt64,
+    endo_done_task_percent_v Decimal(18,2),
+    endo_assumpt_task_count_v UInt64,
+    endo_assumpt_task_percent_v Decimal(18,2),
+    endo_plan_task_count_v   UInt64,
+    endo_plan_task_percent_v Decimal(18,2),
+    endo_failed_task_count_v UInt64,
+    endo_failed_task_percent_v Decimal(18,2),
+    insert_dttm              DateTime64(3, 'Europe/Moscow'),
+    update_dttm              DateTime64(3, 'Europe/Moscow')
+)
+ENGINE = MergeTree
+ORDER BY (f_region_smo_cd, f_profile_cd, f_dn_group_cd, f_y, f_q, f_smo, f_mo)
+SETTINGS index_granularity = 8192;
+
+-- 5. rating_mo
+CREATE TABLE cube.rating_mo
+(
+    f_y            Int32,
+    f_q            Int32,
+    f_region_smo_cd String,
+    f_profile_cd   String,
+    f_dn_group_cd  String,
+    f_smo          String,
+    f_mo           String,
+    mo_cd          String,
+    mo_name        String,
+    insured_cnt    UInt64,
+    sl_dn_cnt      UInt64,
+    all_tasks      UInt64,
+    task_done_cnt  UInt64,
+    task_done_prc  Decimal(18,2),
+    charge_item_cnt UInt64,
+    insert_dttm    DateTime64(3, 'Europe/Moscow'),
+    update_dttm    DateTime64(3, 'Europe/Moscow')
+)
+ENGINE = MergeTree
+ORDER BY (f_y, f_q, f_region_smo_cd, f_profile_cd, f_dn_group_cd, f_smo, f_mo, mo_cd)
+SETTINGS index_granularity = 8192;
+
+-- 6. rating_region
+CREATE TABLE cube.rating_region
+(
+    f_y             Int32,
+    f_q             Int32,
+    f_region_smo_cd String,
+    f_profile_cd    String,
+    f_dn_group_cd   String,
+    f_smo           String,
+    f_mo            String,
+    region_smo_cd   String,
+    mo_cnt          UInt64,
+    smo_cnt         UInt64,
+    insured_cnt     UInt64,
+    sl_dn_cnt       UInt64,
+    all_tasks       UInt64,
+    task_done_cnt   UInt64,
+    task_done_prc   Decimal(18,2),
+    charge_item_cnt UInt64,
+    insert_dttm     DateTime64(3, 'Europe/Moscow'),
+    update_dttm     DateTime64(3, 'Europe/Moscow')
+)
+ENGINE = MergeTree
+ORDER BY (f_y, f_q, f_region_smo_cd, f_profile_cd, f_dn_group_cd, f_smo, f_mo, region_smo_cd)
+SETTINGS index_granularity = 8192;
+
+-- 7. rating_smo 
+CREATE TABLE cube.rating_smo
+(
+    f_y             Int32,
+    f_q             Int32,
+    f_region_smo_cd String,
+    f_profile_cd    String,
+    f_dn_group_cd   String,
+    f_smo           String,
+    f_mo            String,
+    region_smo_cd   String,
+    mo_cnt          UInt64,
+    smo_cnt         UInt64,
+    insured_cnt     UInt64,
+    sl_dn_cnt       UInt64,
+    all_tasks       UInt64,
+    task_done_cnt   UInt64,
+    task_done_prc   Decimal(18,2),
+    charge_item_cnt UInt64,
+    insert_dttm     DateTime64(3, 'Europe/Moscow'),
+    update_dttm     DateTime64(3, 'Europe/Moscow')
+)
+ENGINE = MergeTree
+ORDER BY (f_y, f_q, f_region_smo_cd, f_profile_cd, f_dn_group_cd, f_smo, f_mo, region_smo_cd)
+SETTINGS index_granularity = 8192;
+
+-- 8. lk_inform
+CREATE TABLE IF NOT EXISTS cube.lk_inform
+(
+    f_region_smo_cd         String,
+    f_profile_cd            String,
+    f_dn_group_cd           String,
+    f_y                     Int32,
+    f_q                     Int32,
+    f_smo                   String,
+    f_mo                    String,
+    zl_on_dn_total          UInt64,
+    using_lk_total          UInt64,
+    using_lk_percent        Decimal(18,2),
+    using_lk_last_3m        UInt64,
+    using_lk_last_3m_percent Decimal(18,2),
+    using_lk_last_y         UInt64,
+    using_lk_last_y_percent Decimal(18,2),
+    insert_dttm             DateTime64(3, 'Europe/Moscow'),
+    update_dttm             DateTime64(3, 'Europe/Moscow')
+)
+ENGINE = MergeTree
+ORDER BY (f_region_smo_cd, f_profile_cd, f_dn_group_cd, f_y, f_q, f_smo, f_mo);
+
+-- 9. risk_final
+CREATE TABLE cube.risk_final
+(
+    f_region_smo_cd          String,
+    f_profile_cd             String,
+    f_dn_group_cd            String,
+    f_y                      Int32,
+    f_q                      Int32,
+    f_smo                    String,
+    f_mo                     String,
+    risk_id                  Int8,
+    countV                   UInt64,
+    countGtAverageV          UInt64,
+    mCountV                  UInt64,
+    wCountV                  UInt64,
+    m1839V                   UInt64,
+    m1839_percent            UInt8,
+    m4065V                   UInt64,
+    m4065_percent            UInt8,
+    mOver65V                 UInt64,
+    mOver65_percent          UInt8,
+    w1839V                   UInt64,
+    w1839_percent            UInt8,
+    w4060V                   UInt64,
+    w4060_percent            UInt8,
+    wOver60V                 UInt64,
+    wOver60_percent          UInt8,
+    mCountGtAverageV         UInt64,
+    wCountGtAverageV         UInt64,
+    m1839GtAverageV          UInt64,
+    m1839GtAverage_percent   UInt8,
+    m4065GtAverageV          UInt64,
+    m4065GtAverage_percent   UInt8,
+    mOver65GtAverageV        UInt64,
+    mOver65GtAverage_percent UInt8,
+    w1839GtAverageV          UInt64,
+    w1839GtAverage_percent   UInt8,
+    w4060GtAverageV          UInt64,
+    w4060GtAverage_percent   UInt8,
+    wOver60GtAverageV        UInt64,
+    wOver60GtAverage_percent UInt8,
+    lowV                     UInt64,
+    low_percent              UInt8,
+    averageV                 UInt64,
+    average_percent          UInt8,
+    highV                    UInt64,
+    high_percent             UInt8
+)
+ENGINE = MergeTree
+ORDER BY (f_region_smo_cd, f_profile_cd, f_dn_group_cd, f_y, f_q, f_smo, f_mo, risk_id)
+SETTINGS index_granularity = 8192;
+
+-- 10. statusevent
+CREATE TABLE cube.statusevent
+(
+    f_region_smo_cd      String,
+    f_profile_cd         String,
+    f_dn_group_cd        String,
+    f_y                  Int32,
+    f_q                  Int32,
+    f_smo                String,
+    f_mo                 String,
+    done_task_count_v    UInt64,
+    done_task_percent_v  Decimal(18,2),
+    assumpt_task_count_v UInt64,
+    assumpt_task_percent_v Decimal(18,2),
+    plan_task_count_v    UInt64,
+    plan_task_percent_v  Decimal(18,2),
+    failed_task_count_v  UInt64,
+    failed_task_percent_v Decimal(18,2),
+    all_tasks            UInt64,
+    insert_dttm          DateTime64(3, 'Europe/Moscow'),
+    update_dttm          DateTime64(3, 'Europe/Moscow')
+)
+ENGINE = MergeTree
+ORDER BY (f_region_smo_cd, f_profile_cd, f_dn_group_cd, f_y, f_q, f_smo, f_mo)
+SETTINGS index_granularity = 8192;
+
+-- 11. work2
+CREATE TABLE cube.work2
+(
+    f_region_smo_cd  String,
+    f_profile_cd     String,
+    f_dn_group_cd    String,
+    f_y              Int32,
+    f_q              Int32,
+    f_smo            String,
+    f_mo             String,
+    worker_count_v   UInt64,
+    worker_percent_v Decimal(18,2),
+    notwork_count_v  UInt64,
+    notwork_percent_v Decimal(18,2),
+    zl_on_dn_total   UInt64,
+    insert_dttm      DateTime64(3, 'Europe/Moscow'),
+    update_dttm      DateTime64(3, 'Europe/Moscow')
+)
+ENGINE = MergeTree
+ORDER BY (f_region_smo_cd, f_profile_cd, f_dn_group_cd, f_y, f_q, f_smo, f_mo)
+SETTINGS index_granularity = 8192;
