@@ -1,0 +1,251 @@
+5. attendance(observed)
+5.1 INSERT INTO tmp.for_attendance
+SELECT
+    mpioip,
+    in_dt,
+    out_dt,
+    death_dt,          
+    birth_dt,
+    task_id,
+    task_status_cd,
+    task_end,
+    closed_dt,
+    if(ifNull(smo_cd, '') = '', '0', substring(smo_cd, 1, 2)) AS f_region_smo_cd,
+    if(ifNull(profile_cd, 0) = 0, '0', toString(profile_cd)) AS f_profile_cd,
+    if(ifNull(group_cd, 0) = 0, '0', toString(group_cd)) AS f_dn_group_cd,
+    toYear(in_dt) AS f_y,
+    0 AS f_q,
+    if(ifNull(smo_cd, '') = '', '0', smo_cd) AS f_smo,
+    if(ifNull(attach_mo_cd, '') = '', '0', attach_mo_cd) AS f_mo
+FROM tmp.for_basic_metrics;
+5.2 INSERT INTO tmp.dim_attendance_filters
+SELECT DISTINCT
+    f_region_smo_cd,
+    f_profile_cd,
+    f_dn_group_cd,
+    f_y,
+    f_q,
+    f_smo,
+    f_mo
+FROM tmp.for_attendance;
+5.3 
+TRUNCATE TABLE cube.attendance;
+
+INSERT INTO cube.attendance
+SELECT
+    f.f_region_smo_cd,
+    f.f_profile_cd,
+    f.f_dn_group_cd,
+    f.f_y,
+    f.f_q,
+    f.f_smo,
+    f.f_mo,
+    sum(x.total_flag) AS total,
+    sum(x.not_observed_flag) AS not_observed,
+    round(100.0 * sum(x.not_observed_flag) / nullIf(sum(x.total_flag), 0), 2) AS not_observed_percent,
+    sum(x.observed_over_2_y_flag) AS observed_over_2_y,
+    round(100.0 * sum(x.observed_over_2_y_flag) / nullIf(sum(x.total_flag), 0), 2) AS observed_over_2_y_percent,
+    sum(x.observed_over_1_y_flag) AS observed_over_1_y,
+    round(100.0 * sum(x.observed_over_1_y_flag) / nullIf(sum(x.total_flag), 0), 2) AS observed_over_1_y_percent,
+    sum(x.timely_visits_flag) AS timely_visits,
+    round(100.0 * sum(x.timely_visits_flag) / nullIf(sum(x.total_flag), 0), 2) AS timely_visits_percent
+FROM tmp.dim_attendance_filters f
+INNER JOIN
+(
+    SELECT
+        if(bitTest(mask, 0), '0', f_region_smo_cd) AS f_region_smo_cd,
+        if(bitTest(mask, 1), '0', f_profile_cd) AS f_profile_cd,
+        if(bitTest(mask, 2), '0', f_dn_group_cd) AS f_dn_group_cd,
+        f_y,
+        f_q,
+        if(bitTest(mask, 3), '0', f_smo) AS f_smo,
+        if(bitTest(mask, 4), '0', f_mo) AS f_mo,
+        mpioip,
+        1 AS total_flag,
+        CASE WHEN task_status_cd NOT IN (1,2) OR task_status_cd IS NULL THEN 1 ELSE 0 END AS not_observed_flag,
+        CASE WHEN greatest(task_end, closed_dt) < addYears(toDate(concat(toString(f_y), '-01-01')), -2) THEN 1 ELSE 0 END AS observed_over_2_y_flag,
+        CASE WHEN greatest(task_end, closed_dt) >= addYears(toDate(concat(toString(f_y), '-01-01')), -2)
+              AND greatest(task_end, closed_dt) < addYears(toDate(concat(toString(f_y), '-01-01')), -1) THEN 1 ELSE 0 END AS observed_over_1_y_flag,
+        CASE WHEN greatest(task_end, closed_dt) >= addYears(toDate(concat(toString(f_y), '-01-01')), -1) THEN 1 ELSE 0 END AS timely_visits_flag
+    FROM tmp.for_attendance
+    ARRAY JOIN range(32) AS mask
+) x
+ON  x.f_region_smo_cd = f.f_region_smo_cd
+AND x.f_profile_cd = f.f_profile_cd
+AND x.f_dn_group_cd = f.f_dn_group_cd
+AND x.f_y = f.f_y
+AND x.f_q = f.f_q
+AND x.f_smo = f.f_smo
+AND x.f_mo = f.f_mo
+GROUP BY
+    f.f_region_smo_cd,
+    f.f_profile_cd,
+    f.f_dn_group_cd,
+    f.f_y,
+    f.f_q,
+    f.f_smo,
+    f.f_mo
+HAVING total > 0;
+6. profile
+5.1 TRUNCATE TABLE tmp.profile_task_agg;
+
+INSERT INTO tmp.profile_task_agg
+SELECT
+    if(bitTest(mask, 0), '0', real_region_smo_cd) AS f_region_smo_cd,
+    if(bitTest(mask, 1), '0', real_profile_cd) AS f_profile_cd,
+    if(bitTest(mask, 2), '0', real_dn_group_cd) AS f_dn_group_cd,
+    f_y,
+    f_q,
+    if(bitTest(mask, 3), '0', real_smo) AS f_smo,
+    if(bitTest(mask, 4), '0', real_mo) AS f_mo,
+    profile_cd,
+    task_status_cd,
+    uniqExact(task_id) AS task_cnt
+FROM
+(
+    SELECT DISTINCT
+        cp.f_y,
+        cp.f_q,
+        if(ifNull(t.smo_cd, '') = '', '0', substring(t.smo_cd, 1, 2)) AS real_region_smo_cd,
+        toString(ifNull(t.profile_cd, 0)) AS real_profile_cd,
+        toString(ifNull(t.group_cd, 0)) AS real_dn_group_cd,
+        if(ifNull(t.smo_cd, '') = '', '0', t.smo_cd) AS real_smo,
+        if(ifNull(t.attach_mo_cd, '') = '', '0', t.attach_mo_cd) AS real_mo,
+        t.task_id,
+        t.task_status_cd,
+        t.profile_cd
+    FROM tmp.for_basic_metrics AS t
+    CROSS JOIN tmp.calc_periods AS cp
+    WHERE t.task_id IS NOT NULL
+      AND t.profile_cd IN (29, 60, 122)
+      AND t.task_start < cp.dt_to
+      AND t.task_end >= cp.dt_from
+) AS src
+ARRAY JOIN range(32) AS mask
+GROUP BY
+    f_region_smo_cd,
+    f_profile_cd,
+    f_dn_group_cd,
+    f_y,
+    f_q,
+    f_smo,
+    f_mo,
+    profile_cd,
+    task_status_cd;
+5.2. profile_task_agg 
+??? 
+
+5.3 TRUNCATE TABLE cube.profile;
+
+INSERT INTO cube.profile
+(
+    f_region_smo_cd,
+    f_profile_cd,
+    f_dn_group_cd,
+    f_y,
+    f_q,
+    f_smo,
+    f_mo,
+    bsk_tasks_count_v,
+    zno_tasks_count_v,
+    bsk_done_task_count_v,
+    bsk_done_task_percent_v,
+    bsk_assumpt_task_count_v,
+    bsk_assumpt_task_percent_v,
+    bsk_plan_task_count_v,
+    bsk_plan_task_percent_v,
+    bsk_failed_task_count_v,
+    bsk_failed_task_percent_v,
+    zno_done_task_count_v,
+    zno_done_task_percent_v,
+    zno_assumpt_task_count_v,
+    zno_assumpt_task_percent_v,
+    zno_plan_task_count_v,
+    zno_plan_task_percent_v,
+    zno_failed_task_count_v,
+    zno_failed_task_percent_v,
+    endo_tasks_count_v,
+    endo_done_task_count_v,
+    endo_done_task_percent_v,
+    endo_assumpt_task_count_v,
+    endo_assumpt_task_percent_v,
+    endo_plan_task_count_v,
+    endo_plan_task_percent_v,
+    endo_failed_task_count_v,
+    endo_failed_task_percent_v,
+
+    insert_dttm,
+    update_dttm
+)
+SELECT
+    f_region_smo_cd,
+    f_profile_cd,
+    f_dn_group_cd,
+    f_y,
+    f_q,
+    f_smo,
+    f_mo,
+    bsk_tasks_count_v,
+    zno_tasks_count_v,
+    bsk_done_task_count_v,
+    toDecimal64(ifNull(round(bsk_done_task_count_v * 100.0 / nullIf(bsk_tasks_count_v, 0), 2), 0), 2) AS bsk_done_task_percent_v,
+    bsk_assumpt_task_count_v,
+    toDecimal64(ifNull(round(bsk_assumpt_task_count_v * 100.0 / nullIf(bsk_tasks_count_v, 0), 2), 0), 2) AS bsk_assumpt_task_percent_v,
+    bsk_plan_task_count_v,
+    toDecimal64(ifNull(round(bsk_plan_task_count_v * 100.0 / nullIf(bsk_tasks_count_v, 0), 2), 0), 2) AS bsk_plan_task_percent_v,
+    bsk_failed_task_count_v,
+    toDecimal64(ifNull(round(bsk_failed_task_count_v * 100.0 / nullIf(bsk_tasks_count_v, 0), 2), 0), 2) AS bsk_failed_task_percent_v,
+    zno_done_task_count_v,
+    toDecimal64(ifNull(round(zno_done_task_count_v * 100.0 / nullIf(zno_tasks_count_v, 0), 2), 0), 2) AS zno_done_task_percent_v,
+    zno_assumpt_task_count_v,
+    toDecimal64(ifNull(round(zno_assumpt_task_count_v * 100.0 / nullIf(zno_tasks_count_v, 0), 2), 0), 2) AS zno_assumpt_task_percent_v,
+    zno_plan_task_count_v,
+    toDecimal64(ifNull(round(zno_plan_task_count_v * 100.0 / nullIf(zno_tasks_count_v, 0), 2), 0), 2) AS zno_plan_task_percent_v,
+    zno_failed_task_count_v,
+    toDecimal64(ifNull(round(zno_failed_task_count_v * 100.0 / nullIf(zno_tasks_count_v, 0), 2), 0), 2) AS zno_failed_task_percent_v,
+    endo_tasks_count_v,
+    endo_done_task_count_v,
+    toDecimal64(ifNull(round(endo_done_task_count_v * 100.0 / nullIf(endo_tasks_count_v, 0), 2), 0), 2) AS endo_done_task_percent_v,
+    endo_assumpt_task_count_v,
+    toDecimal64(ifNull(round(endo_assumpt_task_count_v * 100.0 / nullIf(endo_tasks_count_v, 0), 2), 0), 2) AS endo_assumpt_task_percent_v,
+    endo_plan_task_count_v,
+    toDecimal64(ifNull(round(endo_plan_task_count_v * 100.0 / nullIf(endo_tasks_count_v, 0), 2), 0), 2) AS endo_plan_task_percent_v,
+    endo_failed_task_count_v,
+    toDecimal64(ifNull(round(endo_failed_task_count_v * 100.0 / nullIf(endo_tasks_count_v, 0), 2), 0), 2) AS endo_failed_task_percent_v,
+    now64(3, 'Europe/Moscow') AS insert_dttm,
+    now64(3, 'Europe/Moscow') AS update_dttm
+FROM
+(
+    SELECT
+        f_region_smo_cd,
+        f_profile_cd,
+        f_dn_group_cd,
+        f_y,
+        f_q,
+        f_smo,
+        f_mo,
+        sumIf(task_cnt, profile_cd = 29) AS bsk_tasks_count_v,
+        sumIf(task_cnt, profile_cd = 60) AS zno_tasks_count_v,
+        sumIf(task_cnt, profile_cd = 29 AND task_status_cd = 1) AS bsk_done_task_count_v,
+        sumIf(task_cnt, profile_cd = 29 AND task_status_cd = 2) AS bsk_assumpt_task_count_v,
+        sumIf(task_cnt, profile_cd = 29 AND task_status_cd = 4) AS bsk_plan_task_count_v,
+        sumIf(task_cnt, profile_cd = 29 AND task_status_cd = 3) AS bsk_failed_task_count_v,
+        sumIf(task_cnt, profile_cd = 60 AND task_status_cd = 1) AS zno_done_task_count_v,
+        sumIf(task_cnt, profile_cd = 60 AND task_status_cd = 2) AS zno_assumpt_task_count_v,
+        sumIf(task_cnt, profile_cd = 60 AND task_status_cd = 4) AS zno_plan_task_count_v,
+        sumIf(task_cnt, profile_cd = 60 AND task_status_cd = 3) AS zno_failed_task_count_v,
+        sumIf(task_cnt, profile_cd = 122) AS endo_tasks_count_v,
+        sumIf(task_cnt, profile_cd = 122 AND task_status_cd = 1) AS endo_done_task_count_v,
+        sumIf(task_cnt, profile_cd = 122 AND task_status_cd = 2) AS endo_assumpt_task_count_v,
+        sumIf(task_cnt, profile_cd = 122 AND task_status_cd = 4) AS endo_plan_task_count_v,
+        sumIf(task_cnt, profile_cd = 122 AND task_status_cd = 3) AS endo_failed_task_count_v
+    FROM tmp.profile_task_agg
+    GROUP BY
+        f_region_smo_cd,
+        f_profile_cd,
+        f_dn_group_cd,
+        f_y,
+        f_q,
+        f_smo,
+        f_mo
+);
