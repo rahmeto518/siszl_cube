@@ -1,0 +1,275 @@
+7-10 . rating_mo, rating_region, rating_smo
+
+7.1 INSERT INTO tmp.rating_task_base
+SELECT
+    rb.mpioip,
+    rb.disp_id,
+    rb.plan_id,
+    rb.profile_cd,
+    rb.group_cd,
+    rb.smo_region_cd AS region_smo_cd,
+    rb.smo_cd,
+    rb.disp_mo_cd AS mo_cd,
+    t.task_id,
+    t.task_status_cd,
+    t.task_start,
+    t.task_end,
+    t.closed_dt,
+    tu.usl_id
+FROM tmp.rating_base rb
+LEFT JOIN stage.event_task t
+    ON t.mpioip = rb.mpioip
+LEFT JOIN stage.task_usl tu
+    ON tu.task_id = t.task_id
+WHERE t.task_id IS NOT NULL;
+7.2. rating_base
+7.3 INSERT INTO precalc.rating_detail_part
+SELECT
+    cp.f_y,
+    cp.f_q,
+    if(bitTest(mask, 0), '0', region_smo_cd) AS f_region_smo_cd,
+    if(bitTest(mask, 1), '0', toString(profile_cd)) AS f_profile_cd,
+    if(bitTest(mask, 2), '0', toString(group_cd)) AS f_dn_group_cd,
+    if(bitTest(mask, 3), '0', smo_cd) AS f_smo,
+    if(bitTest(mask, 4), '0', mo_cd) AS f_mo,
+    region_smo_cd,
+    smo_cd,
+    mo_cd,
+    uniqExact(mpioip) AS insured_cnt,
+    uniqExact(disp_id) AS sl_dn_cnt,
+    toUInt64(0) AS all_tasks,
+    toUInt64(0) AS task_done_cnt,
+    toUInt64(0) AS charge_item_cnt
+FROM
+(
+    SELECT
+        mpioip,
+        disp_id,
+        profile_cd,
+        group_cd,
+        smo_region_cd AS region_smo_cd,
+        smo_cd,
+        disp_mo_cd AS mo_cd,
+        disp_in_dt,
+        disp_out_dt
+    FROM tmp.rating_base
+    WHERE mpioip IS NOT NULL
+      AND disp_id IS NOT NULL
+) rb
+CROSS JOIN
+(
+    SELECT *
+    FROM tmp.calc_periods
+    WHERE f_y = 2026
+) cp
+ARRAY JOIN range(32) AS mask
+WHERE rb.disp_in_dt < cp.dt_to
+  AND ifNull(rb.disp_out_dt, toDate('2100-01-01')) >= cp.dt_from
+GROUP BY
+    cp.f_y,
+    cp.f_q,
+    f_region_smo_cd,
+    f_profile_cd,
+    f_dn_group_cd,
+    f_smo,
+    f_mo,
+    region_smo_cd,
+    smo_cd,
+    mo_cd;
+
+
+7.4. INSERT INTO precalc.rating_detail
+(
+    f_y,
+    f_q,
+    f_region_smo_cd,
+    f_profile_cd,
+    f_dn_group_cd,
+    f_smo,
+    f_mo,
+    region_smo_cd,
+    smo_cd,
+    mo_cd,
+    insured_cnt,
+    sl_dn_cnt,
+    all_tasks,
+    task_done_cnt,
+    charge_item_cnt,
+    insert_dttm,
+    update_dttm
+)
+SELECT
+    f_y,
+    f_q,
+    f_region_smo_cd,
+    f_profile_cd,
+    f_dn_group_cd,
+    f_smo,
+    f_mo,
+    region_smo_cd,
+    smo_cd,
+    mo_cd,
+    sum(insured_cnt) AS insured_cnt,
+    sum(sl_dn_cnt) AS sl_dn_cnt,
+    sum(all_tasks) AS all_tasks,
+    sum(task_done_cnt) AS task_done_cnt,
+    sum(charge_item_cnt) AS charge_item_cnt,
+    now64(3, 'Europe/Moscow') AS insert_dttm,
+    now64(3, 'Europe/Moscow') AS update_dttm
+FROM precalc.rating_detail_part
+GROUP BY
+    f_y,
+    f_q,
+    f_region_smo_cd,
+    f_profile_cd,
+    f_dn_group_cd,
+    f_smo,
+    f_mo,
+    region_smo_cd,
+    smo_cd,
+    mo_cd;
+
+7.5 INSERT INTO cube.rating_region
+(
+    f_y,
+    f_q,
+    f_region_smo_cd,
+    f_profile_cd,
+    f_dn_group_cd,
+    f_smo,
+    f_mo,
+    region_smo_cd,
+    mo_cnt,
+    smo_cnt,
+    insured_cnt,
+    sl_dn_cnt,
+    all_tasks,
+    task_done_cnt,
+    task_done_prc,
+    charge_item_cnt,
+    insert_dttm,
+    update_dttm
+)
+SELECT
+    f_y,
+    f_q,
+    f_region_smo_cd,
+    f_profile_cd,
+    f_dn_group_cd,
+    f_smo,
+    f_mo,
+    region_smo_cd,
+    mo_cnt,
+    smo_cnt,
+    insured_cnt_sum,
+    sl_dn_cnt_sum,
+    all_tasks_sum,
+    task_done_cnt_sum,
+    toDecimal64(
+        ifNull(round(task_done_cnt_sum * 100.0 / nullIf(all_tasks_sum, 0), 2), 0),
+        2
+    ) AS task_done_prc,
+    charge_item_cnt_sum,
+    now64(3, 'Europe/Moscow'),
+    now64(3, 'Europe/Moscow')
+FROM
+(
+    SELECT
+        f_y,
+        f_q,
+        f_region_smo_cd,
+        f_profile_cd,
+        f_dn_group_cd,
+        f_smo,
+        f_mo,
+        region_smo_cd,
+        uniqExact(mo_cd) AS mo_cnt,
+        uniqExact(smo_cd) AS smo_cnt,
+        sum(insured_cnt) AS insured_cnt_sum,
+        sum(sl_dn_cnt) AS sl_dn_cnt_sum,
+        sum(all_tasks) AS all_tasks_sum,
+        sum(task_done_cnt) AS task_done_cnt_sum,
+        sum(charge_item_cnt) AS charge_item_cnt_sum
+    FROM precalc.rating_detail
+    GROUP BY
+        f_y,
+        f_q,
+        f_region_smo_cd,
+        f_profile_cd,
+        f_dn_group_cd,
+        f_smo,
+        f_mo,
+        region_smo_cd
+);
+
+7.6 INSERT INTO cube.rating_smo
+(
+    f_y, f_q, f_region_smo_cd, f_profile_cd, f_dn_group_cd, f_smo, f_mo,
+    smo_cd,
+    mo_cnt, insured_cnt, sl_dn_cnt, all_tasks, task_done_cnt,
+    task_done_prc, charge_item_cnt,
+    insert_dttm, update_dttm
+)
+SELECT
+    f_y, f_q, f_region_smo_cd, f_profile_cd, f_dn_group_cd, f_smo, f_mo,
+    smo_cd,
+    mo_cnt,
+    insured_cnt_sum,
+    sl_dn_cnt_sum,
+    all_tasks_sum,
+    task_done_cnt_sum,
+    toDecimal64(ifNull(round(task_done_cnt_sum * 100.0 / nullIf(all_tasks_sum, 0), 2), 0), 2),
+    charge_item_cnt_sum,
+    now64(3, 'Europe/Moscow'),
+    now64(3, 'Europe/Moscow')
+FROM
+(
+    SELECT
+        f_y, f_q, f_region_smo_cd, f_profile_cd, f_dn_group_cd, f_smo, f_mo,
+        smo_cd,
+        uniqExact(mo_cd) AS mo_cnt,
+        sum(insured_cnt) AS insured_cnt_sum,
+        sum(sl_dn_cnt) AS sl_dn_cnt_sum,
+        sum(all_tasks) AS all_tasks_sum,
+        sum(task_done_cnt) AS task_done_cnt_sum,
+        sum(charge_item_cnt) AS charge_item_cnt_sum
+    FROM precalc.rating_detail
+    GROUP BY
+        f_y, f_q, f_region_smo_cd, f_profile_cd, f_dn_group_cd, f_smo, f_mo,
+        smo_cd
+);
+
+7.6 INSERT INTO cube.rating_mo
+(
+    f_y, f_q, f_region_smo_cd, f_profile_cd, f_dn_group_cd, f_smo, f_mo,
+    mo_cd,
+    insured_cnt, sl_dn_cnt, all_tasks, task_done_cnt,
+    task_done_prc, charge_item_cnt,
+    insert_dttm, update_dttm
+)
+SELECT
+    f_y, f_q, f_region_smo_cd, f_profile_cd, f_dn_group_cd, f_smo, f_mo,
+    mo_cd,
+    insured_cnt_sum,
+    sl_dn_cnt_sum,
+    all_tasks_sum,
+    task_done_cnt_sum,
+    toDecimal64(ifNull(round(task_done_cnt_sum * 100.0 / nullIf(all_tasks_sum, 0), 2), 0), 2),
+    charge_item_cnt_sum,
+    now64(3, 'Europe/Moscow'),
+    now64(3, 'Europe/Moscow')
+FROM
+(
+    SELECT
+        f_y, f_q, f_region_smo_cd, f_profile_cd, f_dn_group_cd, f_smo, f_mo,
+        mo_cd,
+        sum(insured_cnt) AS insured_cnt_sum,
+        sum(sl_dn_cnt) AS sl_dn_cnt_sum,
+        sum(all_tasks) AS all_tasks_sum,
+        sum(task_done_cnt) AS task_done_cnt_sum,
+        sum(charge_item_cnt) AS charge_item_cnt_sum
+    FROM precalc.rating_detail
+    GROUP BY
+        f_y, f_q, f_region_smo_cd, f_profile_cd, f_dn_group_cd, f_smo, f_mo,
+        mo_cd
+);
