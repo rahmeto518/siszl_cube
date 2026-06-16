@@ -73,3 +73,28 @@ ORDER BY
     real_smo,
     real_mo
 );
+
+CREATE TABLE tmp.work_person_base
+(
+
+    `f_y` Int32,
+    `f_q` Int32,
+    `real_region_smo_cd` String,
+    `real_profile_cd` String,
+    `real_dn_group_cd` String,
+    `real_smo` String,
+    `real_mo` String,
+    `mpioip` String,
+    `is_worker` UInt8,
+    `is_notwork` UInt8
+)
+ENGINE = MergeTree
+ORDER BY (f_y,
+ f_q,
+ real_region_smo_cd,
+ real_profile_cd,
+ real_dn_group_cd,
+ real_smo,
+ real_mo,
+ mpioip)
+SETTINGS index_granularity = 8192;
