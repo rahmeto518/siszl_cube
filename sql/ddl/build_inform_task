@@ -1,0 +1,75 @@
+CREATE TABLE IF NOT EXISTS cube.inform_task
+(
+    f_region_smo_cd String,
+    f_profile_cd String,
+    f_dn_group_cd String,
+    f_y UInt16,
+    f_q UInt8,
+    f_smo String,
+    f_mo String,
+    task_inform_total UInt64,
+    task_inform_completed_total UInt64,
+    task_inform_completed_percent Decimal(18, 2),
+    task_inform_delayed_total UInt64,
+    task_inform_delayed_percent Decimal(18, 2),
+    task_inform_overdue_total UInt64,
+    task_inform_overdue_percent Decimal(18, 2),
+    task_inform_in_work_total UInt64,
+    task_inform_in_work_percent Decimal(18, 2),
+    task_inform_needs_processing_total UInt64,
+    task_inform_needs_processing_percent Decimal(18, 2),
+    task_inform_completed_tel_total UInt64,
+    task_inform_completed_tel_percent Decimal(18, 2),
+    task_inform_completed_sms_total UInt64,
+    task_inform_completed_sms_percent Decimal(18, 2),
+    task_inform_completed_epgu_total UInt64,
+    task_inform_completed_epgu_percent Decimal(18, 2),
+    task_inform_completed_lk_total UInt64,
+    task_inform_completed_lk_percent Decimal(18, 2),
+    task_inform_completed_other_total UInt64,
+    task_inform_completed_other_percent Decimal(18, 2),
+    insert_dttm DateTime64(3, 'Europe/Moscow'),
+    update_dttm DateTime64(3, 'Europe/Moscow')
+)
+ENGINE = MergeTree
+ORDER BY
+(
+    f_region_smo_cd,
+    f_profile_cd,
+    f_dn_group_cd,
+    f_y,
+    f_q,
+    f_smo,
+    f_mo
+)
+SETTINGS index_granularity = 8192;
+
+
+CREATE TABLE tmp.inform_task_rslt_source
+(
+    f_y UInt16,
+    f_q UInt8,
+    f_region_smo_cd String,
+    f_profile_cd String,
+    f_dn_group_cd String,
+    f_smo String,
+    f_mo String,
+    tm_task_id UUID,
+    tm_status_cd String,
+    planned_start_dt Nullable(Date),
+    rslt_id Nullable(UUID),
+    communication_method_code Nullable(String),
+    result_created_at Nullable(DateTime)
+)
+ENGINE = MergeTree
+ORDER BY
+(
+    f_y,
+    f_q,
+    f_region_smo_cd,
+    f_profile_cd,
+    f_dn_group_cd,
+    f_smo,
+    f_mo,
+    tm_task_id
+);
