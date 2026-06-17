@@ -1,0 +1,137 @@
+-- 2.1. Заполнение tmp.inform_task_rslt_source
+INSERT INTO tmp.inform_task_rslt_source
+SELECT
+    toUInt16(p.f_y) AS f_y,
+    toUInt8(p.f_q) AS f_q,
+    coalesce(nullIf(toString(t.region_smo_cd), ''), '0') AS f_region_smo_cd,
+    coalesce(nullIf(toString(t.profile_cd), ''), '0') AS f_profile_cd,
+    coalesce(nullIf(toString(t.group_cd), ''), '0') AS f_dn_group_cd,
+    coalesce(nullIf(toString(t.smo_executor_cd), ''), '0') AS f_smo,
+    coalesce(nullIf(toString(t.mo_cd), ''), '0') AS f_mo,
+    t.tm_task_id,
+    t.tm_status_cd,
+    t.planned_start_dt,
+    r.id AS rslt_id,
+    r.communication_method_code,
+    r.created_at AS result_created_at
+FROM tmp.calc_periods AS p
+CROSS JOIN stage.inform_task AS t
+LEFT JOIN stage.inform_rslt AS r ON r.task_id = t.tm_task_id
+WHERE toDate(t.planned_start_dt) BETWEEN addMonths(p.dt_to, -3) AND addDays(p.dt_to, -1)
+  AND t.tm_task_id IS NOT NULL
+  AND (toString(t.profile_cd) != '-1' OR toString(t.group_cd) != '-1');
+
+-- 2.2. Заполнение tmp.inform_task_detail (агрегация по всем измерениям)
+INSERT INTO tmp.inform_task_detail
+SELECT
+    f_region_smo_cd,
+    f_profile_cd,
+    f_dn_group_cd,
+    f_y,
+    f_q,
+    f_smo,
+    f_mo,
+    uniqExact(tm_task_id) AS task_inform_total,
+    uniqExactIf(tm_task_id, tm_status_cd = '4') AS task_inform_completed_total,
+    uniqExactIf(tm_task_id, tm_status_cd = '3') AS task_inform_delayed_total,
+    uniqExactIf(tm_task_id, tm_status_cd = '5') AS task_inform_overdue_total,
+    uniqExactIf(tm_task_id, tm_status_cd = '2') AS task_inform_in_work_total,
+    uniqExactIf(tm_task_id, tm_status_cd = '6') AS task_inform_needs_processing_total,
+    uniqExactIf(tm_task_id, result_created_at IS NOT NULL AND communication_method_code = '1') AS task_inform_completed_tel_total,
+    uniqExactIf(tm_task_id, result_created_at IS NOT NULL AND communication_method_code = '2') AS task_inform_completed_sms_total,
+    uniqExactIf(tm_task_id, result_created_at IS NOT NULL AND communication_method_code = '8') AS task_inform_completed_epgu_total,
+    uniqExactIf(tm_task_id, result_created_at IS NOT NULL AND communication_method_code = '9') AS task_inform_completed_lk_total,
+    uniqExactIf(
+        tm_task_id,
+        result_created_at IS NOT NULL
+        AND communication_method_code NOT IN ('1', '2', '8', '9')
+    ) AS task_inform_completed_other_total
+FROM tmp.inform_task_rslt_source
+GROUP BY
+    f_region_smo_cd,
+    f_profile_cd,
+    f_dn_group_cd,
+    f_y,
+    f_q,
+    f_smo,
+    f_mo;
+
+-- 2.3. Заполнение tmp.inform_task_cube_agg (кубирование с помощью ARRAY JOIN)
+INSERT INTO tmp.inform_task_cube_agg
+SELECT
+    if(bitTest(mask, 0), '0', f_region_smo_cd) AS f_region_smo_cd,
+    if(bitTest(mask, 1), '0', f_profile_cd) AS f_profile_cd,
+    if(bitTest(mask, 2), '0', f_dn_group_cd) AS f_dn_group_cd,
+    if(bitTest(mask, 3), toUInt16(0), f_y) AS f_y,
+    if(bitTest(mask, 4), toUInt8(0), f_q) AS f_q,
+    if(bitTest(mask, 5), '0', f_smo) AS f_smo,
+    if(bitTest(mask, 6), '0', f_mo) AS f_mo,
+    sum(task_inform_total) AS task_inform_total,
+    sum(task_inform_completed_total) AS task_inform_completed_total,
+    sum(task_inform_delayed_total) AS task_inform_delayed_total,
+    sum(task_inform_overdue_total) AS task_inform_overdue_total,
+    sum(task_inform_in_work_total) AS task_inform_in_work_total,
+    sum(task_inform_needs_processing_total) AS task_inform_needs_processing_total,
+    sum(task_inform_completed_tel_total) AS task_inform_completed_tel_total,
+    sum(task_inform_completed_sms_total) AS task_inform_completed_sms_total,
+    sum(task_inform_completed_epgu_total) AS task_inform_completed_epgu_total,
+    sum(task_inform_completed_lk_total) AS task_inform_completed_lk_total,
+    sum(task_inform_completed_other_total) AS task_inform_completed_other_total
+FROM tmp.inform_task_detail
+ARRAY JOIN range(128) AS mask
+WHERE bitTest(mask, 3) = 0 OR bitTest(mask, 4) = 1   -- условие, чтобы не было агрегации одновременно по году и кварталу
+GROUP BY
+    f_region_smo_cd,
+    f_profile_cd,
+    f_dn_group_cd,
+    f_y,
+    f_q,
+    f_smo,
+    f_mo
+HAVING
+    task_inform_total
+    + task_inform_completed_total
+    + task_inform_delayed_total
+    + task_inform_overdue_total
+    + task_inform_in_work_total
+    + task_inform_needs_processing_total
+    + task_inform_completed_tel_total
+    + task_inform_completed_sms_total
+    + task_inform_completed_epgu_total
+    + task_inform_completed_lk_total
+    + task_inform_completed_other_total > 0;
+
+-- 2.4. Заполнение основной таблицы cube.inform_task
+INSERT INTO cube.inform_task
+SELECT
+    f_region_smo_cd,
+    f_profile_cd,
+    f_dn_group_cd,
+    f_y,
+    f_q,
+    f_smo,
+    f_mo,
+    task_inform_total,
+    task_inform_completed_total,
+    toDecimal64(if(task_inform_total > 0, round(task_inform_completed_total * 100.0 / task_inform_total, 2), 0), 2) AS task_inform_completed_percent,
+    task_inform_delayed_total,
+    toDecimal64(if(task_inform_total > 0, round(task_inform_delayed_total * 100.0 / task_inform_total, 2), 0), 2) AS task_inform_delayed_percent,
+    task_inform_overdue_total,
+    toDecimal64(if(task_inform_total > 0, round(task_inform_overdue_total * 100.0 / task_inform_total, 2), 0), 2) AS task_inform_overdue_percent,
+    task_inform_in_work_total,
+    toDecimal64(if(task_inform_total > 0, round(task_inform_in_work_total * 100.0 / task_inform_total, 2), 0), 2) AS task_inform_in_work_percent,
+    task_inform_needs_processing_total,
+    toDecimal64(if(task_inform_total > 0, round(task_inform_needs_processing_total * 100.0 / task_inform_total, 2), 0), 2) AS task_inform_needs_processing_percent,
+    task_inform_completed_tel_total,
+    toDecimal64(if(task_inform_completed_total > 0, round(task_inform_completed_tel_total * 100.0 / task_inform_completed_total, 2), 0), 2) AS task_inform_completed_tel_percent,
+    task_inform_completed_sms_total,
+    toDecimal64(if(task_inform_completed_total > 0, round(task_inform_completed_sms_total * 100.0 / task_inform_completed_total, 2), 0), 2) AS task_inform_completed_sms_percent,
+    task_inform_completed_epgu_total,
+    toDecimal64(if(task_inform_completed_total > 0, round(task_inform_completed_epgu_total * 100.0 / task_inform_completed_total, 2), 0), 2) AS task_inform_completed_epgu_percent,
+    task_inform_completed_lk_total,
+    toDecimal64(if(task_inform_completed_total > 0, round(task_inform_completed_lk_total * 100.0 / task_inform_completed_total, 2), 0), 2) AS task_inform_completed_lk_percent,
+    task_inform_completed_other_total,
+    toDecimal64(if(task_inform_completed_total > 0, round(task_inform_completed_other_total * 100.0 / task_inform_completed_total, 2), 0), 2) AS task_inform_completed_other_percent,
+    now64(3, 'Europe/Moscow') AS insert_dttm,
+    now64(3, 'Europe/Moscow') AS update_dttm
+FROM tmp.inform_task_cube_agg;
