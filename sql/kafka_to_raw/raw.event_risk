@@ -1,0 +1,71 @@
+CREATE TABLE IF NOT EXISTS raw.event_risk
+(
+    event_type LowCardinality(String),
+    event_at DateTime64(9),
+    id String,
+    version UInt64,
+    created_at Nullable(DateTime64(6)),
+    updated_at Nullable(DateTime64(6)),
+    insured_person_id String,
+    cmp_id String,
+    risk_reference LowCardinality(String),
+    risk_display Nullable(String),
+    risk_level_reference LowCardinality(String),
+    risk_level_display Nullable(String),
+    risk_group_reference Nullable(String),
+    risk_group_display Nullable(String),
+    occurrence_date Nullable(Date),
+    received_at Nullable(DateTime64(6)),
+    score Nullable(Decimal(18, 6)),
+    mpi_oip String,
+    before_risk_level_ref Nullable(String),
+    before_score Nullable(Decimal(18, 6)),
+    _loaded_at DateTime64(3) DEFAULT now64(3),
+    raw_message String
+)
+ENGINE = MergeTree
+PARTITION BY toYYYYMM(event_at)
+ORDER BY (mpi_oip, cmp_id, id, event_at)
+TTL toDateTime(event_at) + toIntervalYear(5)
+SETTINGS index_granularity = 8192;
+
+
+CREATE TABLE IF NOT EXISTS raw.kafka_event_risk
+(
+    raw_message String
+)
+ENGINE = Kafka
+SETTINGS
+    kafka_broker_list = 'kafka-svp-01.gisoms-customer.dev2.pd15.foms.mtp:9093,kafka-svp-02.gisoms-customer.dev2.pd15.foms.mtp:9093,kafka-svp-03.gisoms-customer.dev2.pd15.foms.mtp:9093',
+    kafka_topic_list = 'crm-risk',
+    kafka_group_name = 'clickhouse_raw_event_risk',
+    kafka_format = 'JSONAsString',
+    kafka_num_consumers = 3,
+    kafka_max_block_size = 10000;
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS raw.mv_event_risk TO raw.event_risk AS
+SELECT
+    JSONExtractString(raw_message, 'eventType') AS event_type,
+    parseDateTime64BestEffort(JSONExtractString(raw_message, 'eventAt'), 9) AS event_at,
+    JSONExtractString(raw_message, 'resourceData', 'id') AS id,
+    toUInt64OrZero(JSONExtractString(raw_message, 'resourceData', 'meta', 'version')) AS version,
+    parseDateTime64BestEffortOrNull(JSONExtractString(raw_message, 'resourceData', 'meta', 'createdAt'), 6) AS created_at,
+    parseDateTime64BestEffortOrNull(JSONExtractString(raw_message, 'resourceData', 'meta', 'updatedAt'), 6) AS updated_at,
+    JSONExtractString(raw_message, 'resourceData', 'content', 'insuredPersonId') AS insured_person_id,
+    JSONExtractString(raw_message, 'resourceData', 'content', 'cmpId') AS cmp_id,
+    JSONExtractString(raw_message, 'resourceData', 'content', 'riskCoding', 'reference') AS risk_reference,
+    nullIf(JSONExtractString(raw_message, 'resourceData', 'content', 'riskCoding', 'display'), '') AS risk_display,
+    JSONExtractString(raw_message, 'resourceData', 'content', 'riskLevelCoding', 'reference') AS risk_level_reference,
+    nullIf(JSONExtractString(raw_message, 'resourceData', 'content', 'riskLevelCoding', 'display'), '') AS risk_level_display,
+    nullIf(JSONExtractString(raw_message, 'resourceData', 'content', 'riskGroupCoding', 'reference'), '') AS risk_group_reference,
+    nullIf(JSONExtractString(raw_message, 'resourceData', 'content', 'riskGroupCoding', 'display'), '') AS risk_group_display,
+    toDateOrNull(JSONExtractString(raw_message, 'resourceData', 'content', 'occurrenceDate')) AS occurrence_date,
+    parseDateTime64BestEffortOrNull(JSONExtractString(raw_message, 'resourceData', 'content', 'receivedAt'), 6) AS received_at,
+    toDecimal64OrNull(nullIf(JSONExtractRaw(raw_message, 'resourceData', 'content', 'score'), 'null'), 6) AS score,
+    coalesce(JSONExtractString(raw_message, 'resourceData', 'extension', 'insuredPerson', 'mpiOip'), '') AS mpi_oip,
+    nullIf(JSONExtractString(raw_message, 'updateData', 'before', 'content', 'riskLevelCoding', 'reference'), '') AS before_risk_level_ref,
+    toDecimal64OrNull(nullIf(JSONExtractRaw(raw_message, 'updateData', 'before', 'content', 'score'), 'null'), 6) AS before_score,
+    now64(3) AS _loaded_at,
+    raw_message
+FROM raw.kafka_event_risk;
+
