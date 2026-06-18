@@ -1,0 +1,97 @@
+CREATE TABLE IF NOT EXISTS raw.dn_inform_rslt
+(
+    `tm_result_id` UUID,
+    `tm_task_id` UUID,
+    `comment` Nullable(String),
+    `tm_result_cd` String,
+    `tm_result_name` String,
+    `tm_result_sys` String,
+    `tm_reaction_cd` Nullable(String),
+    `tm_reaction_name` Nullable(String),
+    `tm_reaction_sys` Nullable(String),
+    `communication_method_cd` String,
+    `communication_method_name` String,
+    `communication_method_sys` String,
+    `tm_resultauthor_id` Nullable(String),
+    `created_dttm` DateTime,
+    `smo_executor_cd` String,
+    `smo_executor_name` String,
+    `smo_executor_sys` String,
+    `master_person_id` Nullable(Decimal(38, 0)),
+    `mpioip` String,
+    `group_cd` Nullable(Decimal(38, 0)),
+    `group_name` String,
+    `mo_cd` Nullable(FixedString(6)),
+    `mo_name` String,
+    `tfoms_cd` String,
+    `tfoms_name` String,
+    `region_smo_cd` String,
+    `region_smo_name` String,
+    `region_mo_cd` String,
+    `region_mo_name` String,
+    `profile_cd` Nullable(Decimal(38, 0)),
+    `profile_name` String,
+    `insert_dttm` Nullable(DateTime),
+    `update_dttm` Nullable(DateTime)
+)
+ENGINE = MergeTree
+PARTITION BY toYYYYMM(created_dttm)
+ORDER BY (mpioip, tm_result_id, created_dttm)
+TTL created_dttm + toIntervalYear(5)
+SETTINGS index_granularity = 8192;
+
+CREATE TABLE IF NOT EXISTS raw.kafka_dn_inform_rslt
+(
+    `raw_message` String
+)
+ENGINE = Kafka
+SETTINGS
+    kafka_broker_list = 'kafka-svp-01.gisoms-customer.dev2.pd15.foms.mtp:9093,kafka-svp-02.gisoms-customer.dev2.pd15.foms.mtp:9093,kafka-svp-03.gisoms-customer.dev2.pd15.foms.mtp:9093',
+    kafka_topic_list = 'sdt-tm-task-result',
+    kafka_group_name = 'clickhouse_raw_dn_inform_rslt_sdt_v3',
+    kafka_format = 'JSONAsString',
+    kafka_num_consumers = 3,
+    kafka_max_block_size = 10000;
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS raw.mv_dn_inform_rslt TO raw.dn_inform_rslt AS
+SELECT
+    coalesce(toUUIDOrNull(JSONExtractString(raw_message, 'tmResultId')), toUUIDOrNull(JSONExtractString(raw_message, 'id'))) AS tm_result_id,
+    coalesce(toUUIDOrNull(JSONExtractString(raw_message, 'tmTaskId')), toUUIDOrNull(JSONExtractString(raw_message, 'taskId'))) AS tm_task_id,
+    nullIf(JSONExtractString(raw_message, 'comment'), '') AS comment,
+    coalesce(nullIf(JSONExtractString(raw_message, 'tmResultCd'), ''), nullIf(JSONExtractString(raw_message, 'result', 'code'), ''), '') AS tm_result_cd,
+    coalesce(nullIf(JSONExtractString(raw_message, 'tmResultName'), ''), nullIf(JSONExtractString(raw_message, 'result', 'display'), ''), '') AS tm_result_name,
+    coalesce(nullIf(JSONExtractString(raw_message, 'tmResultSys'), ''), nullIf(JSONExtractString(raw_message, 'result', 'system'), ''), '') AS tm_result_sys,
+    coalesce(nullIf(JSONExtractString(raw_message, 'tmReactionCd'), ''), nullIf(JSONExtractString(raw_message, 'reaction', 'code'), '')) AS tm_reaction_cd,
+    coalesce(nullIf(JSONExtractString(raw_message, 'tmReactionName'), ''), nullIf(JSONExtractString(raw_message, 'reaction', 'display'), '')) AS tm_reaction_name,
+    coalesce(nullIf(JSONExtractString(raw_message, 'tmReactionSys'), ''), nullIf(JSONExtractString(raw_message, 'reaction', 'system'), '')) AS tm_reaction_sys,
+    coalesce(nullIf(JSONExtractString(raw_message, 'communicationMethodCd'), ''), nullIf(JSONExtractString(raw_message, 'communicationMethod', 'code'), ''), '') AS communication_method_cd,
+    coalesce(nullIf(JSONExtractString(raw_message, 'communicationMethodName'), ''), nullIf(JSONExtractString(raw_message, 'communicationMethod', 'display'), ''), '') AS communication_method_name,
+    coalesce(nullIf(JSONExtractString(raw_message, 'communicationMethodSys'), ''), nullIf(JSONExtractString(raw_message, 'communicationMethod', 'system'), ''), '') AS communication_method_sys,
+    nullIf(JSONExtractString(raw_message, 'authorId'), '') AS tm_resultauthor_id,
+    coalesce(
+        parseDateTimeBestEffortOrNull(JSONExtractString(raw_message, 'createdAt')),
+        parseDateTimeBestEffortOrNull(JSONExtractString(raw_message, 'createdDttm')),
+        now()
+    ) AS created_dttm,
+    coalesce(nullIf(JSONExtractString(raw_message, 'smoExecutorCd'), ''), nullIf(JSONExtractString(raw_message, 'smo', 'code'), ''), '') AS smo_executor_cd,
+    coalesce(nullIf(JSONExtractString(raw_message, 'smoExecutorName'), ''), nullIf(JSONExtractString(raw_message, 'smo', 'display'), ''), '') AS smo_executor_name,
+    coalesce(nullIf(JSONExtractString(raw_message, 'smoExecutorSys'), ''), nullIf(JSONExtractString(raw_message, 'smo', 'system'), ''), '') AS smo_executor_sys,
+    toDecimal128OrNull(JSONExtractString(raw_message, 'masterPersonId'), 0) AS master_person_id,
+    coalesce(nullIf(JSONExtractString(raw_message, 'mpioip'), ''), nullIf(JSONExtractString(raw_message, 'mpiOip'), ''), '') AS mpioip,
+    toDecimal128OrNull(JSONExtractString(raw_message, 'groupCd'), 0) AS group_cd,
+    coalesce(nullIf(JSONExtractString(raw_message, 'groupName'), ''), '') AS group_name,
+    toFixedString(coalesce(nullIf(JSONExtractString(raw_message, 'moCd'), ''), ''), 6) AS mo_cd,
+    coalesce(nullIf(JSONExtractString(raw_message, 'moName'), ''), '') AS mo_name,
+    coalesce(nullIf(JSONExtractString(raw_message, 'tfomsCd'), ''), '') AS tfoms_cd,
+    coalesce(nullIf(JSONExtractString(raw_message, 'tfomsName'), ''), '') AS tfoms_name,
+    coalesce(nullIf(JSONExtractString(raw_message, 'regionSmoCd'), ''), '') AS region_smo_cd,
+    coalesce(nullIf(JSONExtractString(raw_message, 'regionSmoName'), ''), '') AS region_smo_name,
+    coalesce(nullIf(JSONExtractString(raw_message, 'regionMoCd'), ''), '') AS region_mo_cd,
+    coalesce(nullIf(JSONExtractString(raw_message, 'regionMoName'), ''), '') AS region_mo_name,
+    toDecimal128OrNull(JSONExtractString(raw_message, 'profileCd'), 0) AS profile_cd,
+    coalesce(nullIf(JSONExtractString(raw_message, 'profileName'), ''), '') AS profile_name,
+    coalesce(parseDateTimeBestEffortOrNull(JSONExtractString(raw_message, 'insertDttm')), now()) AS insert_dttm,
+    parseDateTimeBestEffortOrNull(JSONExtractString(raw_message, 'updateDttm')) AS update_dttm
+FROM raw.kafka_dn_inform_rslt
+WHERE coalesce(nullIf(JSONExtractString(raw_message, 'tmResultId'), ''), nullIf(JSONExtractString(raw_message, 'id'), '')) IS NOT NULL;
+
