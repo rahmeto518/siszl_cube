@@ -1,0 +1,85 @@
+CREATE TABLE IF NOT EXISTS raw.event_task
+(
+    `event_type` LowCardinality(String),
+    `event_at` DateTime64(6),
+    `id` String,
+    `version` UInt64,
+    `created_at` Nullable(DateTime64(6)),
+    `updated_at` Nullable(DateTime64(6)),
+    `state_reference` LowCardinality(String),
+    `task_reference` LowCardinality(String),
+    `task_group_reference` LowCardinality(String),
+    `dispensary_action_id` String,
+    `medical_service_completed_date` Nullable(Date),
+    `person_completed_date` Nullable(Date),
+    `person_completed_text` Nullable(String),
+    `restriction_period_start` Nullable(Date),
+    `restriction_period_end` Nullable(Date),
+    `insured_person_id` String,
+    `mpi_oip` String,
+    `dispensary_plan_id` String,
+    `dispensary_episode_id` String,
+    `dispensary_episode_cmp_id` String,
+    `before_state_reference` Nullable(String),
+    `before_restriction_period_start` Nullable(Date),
+    `before_restriction_period_end` Nullable(Date),
+    `before_person_completed_date` Nullable(Date),
+    `execution_result_id` Nullable(String),
+    `execution_result_created_at` Nullable(DateTime64(6)),
+    `execution_result_medical_service_id` Nullable(String),
+    `execution_result_score` Nullable(Float64),
+    `execution_result_medical_service_cmp_id` Nullable(String),
+    `_loaded_at` DateTime64(3) DEFAULT now64(3)
+)
+ENGINE = MergeTree
+PARTITION BY toYYYYMM(event_at)
+ORDER BY (mpi_oip, id, event_at)
+TTL toDateTime(event_at) + toIntervalYear(3)
+SETTINGS index_granularity = 8192;
+
+CREATE TABLE IF NOT EXISTS raw.kafka_event_task
+(
+    `raw_message` String
+)
+ENGINE = Kafka
+SETTINGS
+    kafka_broker_list = 'kafka-svp-01.gisoms-customer.dev2.pd15.foms.mtp:9093,kafka-svp-02.gisoms-customer.dev2.pd15.foms.mtp:9093,kafka-svp-03.gisoms-customer.dev2.pd15.foms.mtp:9093',
+    kafka_topic_list = 'crm-dispensary-task',
+    kafka_group_name = 'clickhouse_raw_event_task_v3',
+    kafka_format = 'JSONAsString',
+    kafka_num_consumers = 3,
+    kafka_max_block_size = 10000;
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS raw.mv_event_task TO raw.event_task AS
+SELECT
+    JSONExtractString(raw_message, 'eventType') AS event_type,
+    ifNull(parseDateTime64BestEffortOrNull(JSONExtractString(raw_message, 'eventAt'), 6), toDateTime64(now64(3), 6)) AS event_at,
+    JSONExtractString(raw_message, 'resourceData', 'id') AS id,
+    toUInt64OrZero(JSONExtractString(raw_message, 'resourceData', 'meta', 'version')) AS version,
+    parseDateTime64BestEffortOrNull(JSONExtractString(raw_message, 'resourceData', 'meta', 'createdAt'), 6) AS created_at,
+    parseDateTime64BestEffortOrNull(JSONExtractString(raw_message, 'resourceData', 'meta', 'updatedAt'), 6) AS updated_at,
+    JSONExtractString(raw_message, 'resourceData', 'content', 'stateReference') AS state_reference,
+    JSONExtractString(raw_message, 'resourceData', 'content', 'taskReference') AS task_reference,
+    JSONExtractString(raw_message, 'resourceData', 'content', 'taskGroupReference') AS task_group_reference,
+    coalesce(nullIf(JSONExtractString(raw_message, 'resourceData', 'content', 'dispensaryActionId'), ''), JSONExtractString(raw_message, 'resourceData', 'extension', 'dispensaryAction', 'id')) AS dispensary_action_id,
+    toDateOrNull(JSONExtractString(raw_message, 'resourceData', 'content', 'medicalServiceCompleted', 'date')) AS medical_service_completed_date,
+    toDateOrNull(JSONExtractString(raw_message, 'resourceData', 'content', 'personCompleted', 'date')) AS person_completed_date,
+    JSONExtractString(raw_message, 'resourceData', 'content', 'personCompleted', 'text') AS person_completed_text,
+    toDateOrNull(JSONExtractString(raw_message, 'resourceData', 'content', 'restrictionPeriod', 'startDateInclude')) AS restriction_period_start,
+    toDateOrNull(JSONExtractString(raw_message, 'resourceData', 'content', 'restrictionPeriod', 'endDateInclude')) AS restriction_period_end,
+    JSONExtractString(raw_message, 'resourceData', 'extension', 'insuredPerson', 'id') AS insured_person_id,
+    JSONExtractString(raw_message, 'resourceData', 'extension', 'insuredPerson', 'mpiOip') AS mpi_oip,
+    JSONExtractString(raw_message, 'resourceData', 'extension', 'dispensaryPlan', 'id') AS dispensary_plan_id,
+    JSONExtractString(raw_message, 'resourceData', 'extension', 'dispensaryEpisode', 'id') AS dispensary_episode_id,
+    JSONExtractString(raw_message, 'resourceData', 'extension', 'dispensaryEpisode', 'cmpId') AS dispensary_episode_cmp_id,
+    nullIf(JSONExtractString(raw_message, 'updateData', 'before', 'content', 'stateReference'), '') AS before_state_reference,
+    toDateOrNull(JSONExtractString(raw_message, 'updateData', 'before', 'content', 'restrictionPeriod', 'startDateInclude')) AS before_restriction_period_start,
+    toDateOrNull(JSONExtractString(raw_message, 'updateData', 'before', 'content', 'restrictionPeriod', 'endDateInclude')) AS before_restriction_period_end,
+    toDateOrNull(JSONExtractString(raw_message, 'updateData', 'before', 'content', 'personCompleted', 'date')) AS before_person_completed_date,
+    nullIf(JSONExtractString(raw_message, 'resourceData', 'extension', 'executionResults', 1, 'id'), '') AS execution_result_id,
+    parseDateTime64BestEffortOrNull(JSONExtractString(raw_message, 'resourceData', 'extension', 'executionResults', 1, 'meta', 'createdAt'), 6) AS execution_result_created_at,
+    nullIf(JSONExtractString(raw_message, 'resourceData', 'extension', 'executionResults', 1, 'content', 'medicalServiceId'), '') AS execution_result_medical_service_id,
+    toFloat64OrNull(JSONExtractString(raw_message, 'resourceData', 'extension', 'executionResults', 1, 'content', 'score')) AS execution_result_score,
+    nullIf(JSONExtractString(raw_message, 'resourceData', 'extension', 'executionResults', 1, 'extension', 'medicalServiceCmpId'), '') AS execution_result_medical_service_cmp_id,
+    now64(3) AS _loaded_at
+FROM raw.kafka_event_task;
