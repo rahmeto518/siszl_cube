@@ -1,0 +1,75 @@
+INSERT INTO cube.map
+SELECT
+    f.f_region_smo_cd,
+    f.f_profile_cd,
+    f.f_dn_group_cd,
+    p.f_y,
+    p.f_q,
+    '0' AS f_smo,
+    f.f_mo,
+    uniqExactIf(b.task_id,
+        b.task_id IS NOT NULL
+        AND b.task_status_cd NOT IN (4, 5)
+        AND b.task_start < p.dt_to
+        AND b.task_end >= p.dt_from
+        AND (f.f_profile_cd = '0' OR toString(ifNull(b.profile_cd, 0)) = f.f_profile_cd)
+        AND (f.f_dn_group_cd = '0' OR toString(ifNull(b.group_cd, 0)) = f.f_dn_group_cd)
+        AND (f.f_mo = '0' OR if(ifNull(b.attach_mo_cd, '') = '', '0', b.attach_mo_cd) = f.f_mo)
+    ) AS all_tasks,
+    uniqExactIf(b.task_id,
+        b.task_id IS NOT NULL
+        AND b.task_status_cd IN (1, 2)
+        AND b.task_start < p.dt_to
+        AND b.task_end >= p.dt_from
+        AND (f.f_profile_cd = '0' OR toString(ifNull(b.profile_cd, 0)) = f.f_profile_cd)
+        AND (f.f_dn_group_cd = '0' OR toString(ifNull(b.group_cd, 0)) = f.f_dn_group_cd)
+        AND (f.f_mo = '0' OR if(ifNull(b.attach_mo_cd, '') = '', '0', b.attach_mo_cd) = f.f_mo)
+    ) AS completed_tasks,
+    toDecimal64(
+        if(
+            uniqExactIf(b.task_id,
+                b.task_id IS NOT NULL
+                AND b.task_status_cd NOT IN (4, 5)
+                AND b.task_start < p.dt_to
+                AND b.task_end >= p.dt_from
+                AND (f.f_profile_cd = '0' OR toString(ifNull(b.profile_cd, 0)) = f.f_profile_cd)
+                AND (f.f_dn_group_cd = '0' OR toString(ifNull(b.group_cd, 0)) = f.f_dn_group_cd)
+                AND (f.f_mo = '0' OR if(ifNull(b.attach_mo_cd, '') = '', '0', b.attach_mo_cd) = f.f_mo)
+            ) > 0,
+            round(
+                uniqExactIf(b.task_id,
+                    b.task_id IS NOT NULL
+                    AND b.task_status_cd IN (1, 2)
+                    AND b.task_start < p.dt_to
+                    AND b.task_end >= p.dt_from
+                    AND (f.f_profile_cd = '0' OR toString(ifNull(b.profile_cd, 0)) = f.f_profile_cd)
+                    AND (f.f_dn_group_cd = '0' OR toString(ifNull(b.group_cd, 0)) = f.f_dn_group_cd)
+                    AND (f.f_mo = '0' OR if(ifNull(b.attach_mo_cd, '') = '', '0', b.attach_mo_cd) = f.f_mo)
+                ) * 100.0 /
+                uniqExactIf(b.task_id,
+                    b.task_id IS NOT NULL
+                    AND b.task_status_cd NOT IN (4, 5)
+                    AND b.task_start < p.dt_to
+                    AND b.task_end >= p.dt_from
+                    AND (f.f_profile_cd = '0' OR toString(ifNull(b.profile_cd, 0)) = f.f_profile_cd)
+                    AND (f.f_dn_group_cd = '0' OR toString(ifNull(b.group_cd, 0)) = f.f_dn_group_cd)
+                    AND (f.f_mo = '0' OR if(ifNull(b.attach_mo_cd, '') = '', '0', b.attach_mo_cd) = f.f_mo)
+                ),
+                2
+            ),
+            0
+        ),
+        18, 2
+    ) AS main_execution_percent
+FROM tmp.dim_basic_filters AS f
+INNER JOIN tmp.calc_periods AS p ON p.f_y = f.f_y
+LEFT JOIN tmp.for_basic_metrics AS b
+    ON if(ifNull(b.smo_region_cd, '') = '', '0', b.smo_region_cd) = f.f_region_smo_cd
+WHERE f.f_region_smo_cd != '0'
+GROUP BY
+    f.f_region_smo_cd,
+    f.f_profile_cd,
+    f.f_dn_group_cd,
+    p.f_y,
+    p.f_q,
+    f.f_mo;
