@@ -1,0 +1,109 @@
+CREATE TABLE IF NOT EXISTS raw.dn_inform_task
+(
+    `id` UUID,
+    `mpi_oip` String,
+    `params_vers` Nullable(String),
+    `task_number` Nullable(String),
+    `task_type_cd` Nullable(String),
+    `task_type_name` Nullable(String),
+    `task_type_sys` Nullable(String),
+    `episode_type_cd` Nullable(String),
+    `episode_type_name` Nullable(String),
+    `episode_type_sys` Nullable(String),
+    `status_cd` Nullable(String),
+    `status_name` Nullable(String),
+    `status_sys` Nullable(String),
+    `diagnosis_cd` Nullable(String),
+    `end_date` Nullable(Date),
+    `tfoms_cd` Nullable(String),
+    `mo_cd` Nullable(String),
+    `planned_start_date` Nullable(Date),
+    `planned_end_date` Nullable(Date),
+    `diagnosis_group_cd` Nullable(String),
+    `disp_type_cd` Nullable(String),
+    `medical_profile_cd` Nullable(String),
+    `gender_cd` Nullable(String),
+    `full_age` Nullable(Int32),
+    `smo_cd` Nullable(String),
+    `smo_user_id` Nullable(String),
+    `insured_person_id` Nullable(UUID),
+    `created_at` Nullable(DateTime),
+    `updated_at` Nullable(DateTime),
+    `close_date` Nullable(Date),
+    `creation_type` Nullable(String),
+    `logical_id` Nullable(String),
+    `comment` Nullable(String),
+    `episode_id` Nullable(UUID),
+    `episode_cmp_id` Nullable(String),
+    `operation_type` Nullable(String),
+    `task_id` Nullable(UUID),
+    `planned_visit_date` Nullable(Date),
+    `task_type_flat` Nullable(String),
+    `communication_method` Nullable(String),
+    `smo_code_flat` Nullable(String),
+    `_loaded_at` DateTime DEFAULT now()
+)
+ENGINE = MergeTree
+PARTITION BY toYYYYMM(coalesce(created_at, _loaded_at))
+ORDER BY (mpi_oip, id, _loaded_at)
+TTL _loaded_at + toIntervalYear(5)
+SETTINGS index_granularity = 8192;
+
+CREATE TABLE IF NOT EXISTS raw.kafka_dn_inform_task
+(
+    `raw_message` String
+)
+ENGINE = Kafka
+SETTINGS
+    kafka_broker_list = 'kafka-svp-01.gisoms-customer.dev2.pd15.foms.mtp:9093,kafka-svp-02.gisoms-customer.dev2.pd15.foms.mtp:9093,kafka-svp-03.gisoms-customer.dev2.pd15.foms.mtp:9093',
+    kafka_topic_list = 'sdt-tm-task',
+    kafka_group_name = 'clickhouse_raw_dn_inform_task_sdt',
+    kafka_format = 'JSONAsString',
+    kafka_num_consumers = 3,
+    kafka_max_block_size = 10000;
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS raw.mv_dn_inform_task TO raw.dn_inform_task AS
+SELECT
+    coalesce(toUUIDOrNull(JSONExtractString(raw_message, 'id')), toUUIDOrNull(JSONExtractString(raw_message, 'taskId'))) AS id,
+    JSONExtractString(raw_message, 'mpiOip') AS mpi_oip,
+    nullIf(JSONExtractString(raw_message, 'paramsVers'), '') AS params_vers,
+    nullIf(JSONExtractString(raw_message, 'taskNumber'), '') AS task_number,
+    coalesce(nullIf(JSONExtractString(raw_message, 'taskType', 'code'), ''), nullIf(JSONExtractString(raw_message, 'taskType'), '')) AS task_type_cd,
+    nullIf(JSONExtractString(raw_message, 'taskType', 'display'), '') AS task_type_name,
+    nullIf(JSONExtractString(raw_message, 'taskType', 'system'), '') AS task_type_sys,
+    nullIf(JSONExtractString(raw_message, 'episodeType', 'code'), '') AS episode_type_cd,
+    nullIf(JSONExtractString(raw_message, 'episodeType', 'display'), '') AS episode_type_name,
+    nullIf(JSONExtractString(raw_message, 'episodeType', 'system'), '') AS episode_type_sys,
+    nullIf(JSONExtractString(raw_message, 'status', 'code'), '') AS status_cd,
+    nullIf(JSONExtractString(raw_message, 'status', 'display'), '') AS status_name,
+    nullIf(JSONExtractString(raw_message, 'status', 'system'), '') AS status_sys,
+    nullIf(JSONExtractString(raw_message, 'diagnosis', 'code'), '') AS diagnosis_cd,
+    toDateOrNull(JSONExtractString(raw_message, 'endDate')) AS end_date,
+    nullIf(JSONExtractString(raw_message, 'tfoms', 'code'), '') AS tfoms_cd,
+    nullIf(JSONExtractString(raw_message, 'mo', 'code'), '') AS mo_cd,
+    toDateOrNull(JSONExtractString(raw_message, 'plannedStartDate')) AS planned_start_date,
+    toDateOrNull(JSONExtractString(raw_message, 'plannedEndDate')) AS planned_end_date,
+    nullIf(JSONExtractString(raw_message, 'diagnosisGroup', 'code'), '') AS diagnosis_group_cd,
+    nullIf(JSONExtractString(raw_message, 'dispType', 'code'), '') AS disp_type_cd,
+    nullIf(JSONExtractString(raw_message, 'medicalProfile', 'code'), '') AS medical_profile_cd,
+    nullIf(JSONExtractString(raw_message, 'gender', 'code'), '') AS gender_cd,
+    toInt32OrNull(JSONExtractString(raw_message, 'fullAge')) AS full_age,
+    nullIf(JSONExtractString(raw_message, 'smo', 'code'), '') AS smo_cd,
+    nullIf(JSONExtractString(raw_message, 'smoUserId'), '') AS smo_user_id,
+    toUUIDOrNull(JSONExtractString(raw_message, 'insuredPersonId')) AS insured_person_id,
+    parseDateTimeBestEffortOrNull(JSONExtractString(raw_message, 'createdAt')) AS created_at,
+    parseDateTimeBestEffortOrNull(JSONExtractString(raw_message, 'updatedAt')) AS updated_at,
+    toDateOrNull(JSONExtractString(raw_message, 'closeDate')) AS close_date,
+    nullIf(JSONExtractString(raw_message, 'creationType'), '') AS creation_type,
+    nullIf(JSONExtractString(raw_message, 'logicalId'), '') AS logical_id,
+    nullIf(JSONExtractString(raw_message, 'comment'), '') AS comment,
+    toUUIDOrNull(JSONExtractString(raw_message, 'episodeId')) AS episode_id,
+    nullIf(JSONExtractString(raw_message, 'episodeCmpId'), '') AS episode_cmp_id,
+    nullIf(JSONExtractString(raw_message, 'operationType'), '') AS operation_type,
+    coalesce(toUUIDOrNull(JSONExtractString(raw_message, 'taskId')), toUUIDOrNull(JSONExtractString(raw_message, 'id'))) AS task_id,
+    toDateOrNull(coalesce(nullIf(JSONExtractString(raw_message, 'plannedVisitDate'), ''), nullIf(JSONExtractString(raw_message, 'plannedStartDate'), ''))) AS planned_visit_date,
+    coalesce(nullIf(JSONExtractString(raw_message, 'taskType'), ''), nullIf(JSONExtractString(raw_message, 'taskType', 'code'), '')) AS task_type_flat,
+    coalesce(nullIf(JSONExtractString(raw_message, 'communicationMethod'), ''), nullIf(JSONExtractString(raw_message, 'communicationMethod', 'display'), ''), nullIf(JSONExtractString(raw_message, 'communicationMethod', 'code'), '')) AS communication_method,
+    coalesce(nullIf(JSONExtractString(raw_message, 'smoCode'), ''), nullIf(JSONExtractString(raw_message, 'smo', 'code'), '')) AS smo_code_flat,
+    now() AS _loaded_at
+FROM raw.kafka_dn_inform_task;
