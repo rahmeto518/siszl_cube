@@ -1,0 +1,53 @@
+CREATE TABLE IF NOT EXISTS raw.event_mo_attachment
+(
+    `event_type` LowCardinality(String),
+    `event_at` DateTime64(6),
+    `id` String,
+    `version` UInt64,
+    `created_at` Nullable(DateTime64(6)),
+    `updated_at` Nullable(DateTime64(6)),
+    `insured_person_id` String,
+    `mo_reference` LowCardinality(String),
+    `mo_site_type_reference` LowCardinality(String),
+    `mo_site_name` Nullable(String),
+    `doctor_text` Nullable(String),
+    `period_start_date` Nullable(Date),
+    `mpi_oip` String DEFAULT '',
+    `_loaded_at` DateTime64(3) DEFAULT now64(3)
+)
+ENGINE = MergeTree
+PARTITION BY toYYYYMM(event_at)
+ORDER BY (insured_person_id, id, event_at)
+TTL toDateTime(event_at) + toIntervalYear(5)
+SETTINGS index_granularity = 8192;
+
+CREATE TABLE IF NOT EXISTS raw.kafka_event_mo_attachment
+(
+    `raw_message` String
+)
+ENGINE = Kafka
+SETTINGS
+    kafka_broker_list = 'kafka-svp-01.gisoms-customer.dev2.pd15.foms.mtp:9093,kafka-svp-02.gisoms-customer.dev2.pd15.foms.mtp:9093,kafka-svp-03.gisoms-customer.dev2.pd15.foms.mtp:9093',
+    kafka_topic_list = 'crm-mo-attachment',
+    kafka_group_name = 'clickhouse_raw_event_mo_attachment',
+    kafka_format = 'JSONAsString',
+    kafka_num_consumers = 2,
+    kafka_max_block_size = 10000;
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS raw.mv_event_mo_attachment TO raw.event_mo_attachment AS
+SELECT
+    JSONExtractString(raw_message, 'eventType') AS event_type,
+    parseDateTime64BestEffort(JSONExtractString(raw_message, 'eventAt'), 6) AS event_at,
+    JSONExtractString(raw_message, 'resourceData', 'id') AS id,
+    toUInt64OrZero(JSONExtractString(raw_message, 'resourceData', 'meta', 'version')) AS version,
+    parseDateTime64BestEffortOrNull(JSONExtractString(raw_message, 'resourceData', 'meta', 'createdAt'), 6) AS created_at,
+    parseDateTime64BestEffortOrNull(JSONExtractString(raw_message, 'resourceData', 'meta', 'updatedAt'), 6) AS updated_at,
+    JSONExtractString(raw_message, 'resourceData', 'content', 'insuredPersonId') AS insured_person_id,
+    coalesce(nullIf(JSONExtractString(raw_message, 'resourceData', 'content', 'mo', 'moReference'), ''), JSONExtractString(raw_message, 'resourceData', 'content', 'mo', 'moCoding', 'reference')) AS mo_reference,
+    coalesce(nullIf(JSONExtractString(raw_message, 'resourceData', 'content', 'mo', 'site', 'typeReference'), ''), JSONExtractString(raw_message, 'resourceData', 'content', 'mo', 'moSite', 'siteTypeCoding', 'reference'), JSONExtractString(raw_message, 'resourceData', 'content', 'mo', 'site', 'typeCoding', 'reference')) AS mo_site_type_reference,
+    nullIf(coalesce(nullIf(JSONExtractString(raw_message, 'resourceData', 'content', 'mo', 'site', 'name'), ''), nullIf(JSONExtractString(raw_message, 'resourceData', 'content', 'mo', 'moSite', 'name'), '')), '') AS mo_site_name,
+    nullIf(JSONExtractString(raw_message, 'resourceData', 'content', 'doctor', 'text'), '') AS doctor_text,
+    toDateOrNull(JSONExtractString(raw_message, 'resourceData', 'content', 'period', 'startDateInclude')) AS period_start_date,
+    '' AS mpi_oip,
+    now64(3) AS _loaded_at
+FROM raw.kafka_event_mo_attachment;
