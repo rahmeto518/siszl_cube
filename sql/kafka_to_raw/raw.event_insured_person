@@ -1,0 +1,57 @@
+CREATE TABLE IF NOT EXISTS raw.event_insured_person
+(
+    `event_type` LowCardinality(String),
+    `event_at` DateTime64(6),
+    `id` String,
+    `version` UInt64,
+    `created_at` Nullable(DateTime64(6)),
+    `updated_at` Nullable(DateTime64(6)),
+    `mpi_oip` String,
+    `enp` Nullable(String),
+    `birth_date` Nullable(Date),
+    `gender_reference` LowCardinality(String),
+    `health_group_reference` LowCardinality(String),
+    `health_group_date` Nullable(Date),
+    `deceased_date` Nullable(Date),
+    `before_mpi_oip` Nullable(String),
+    `before_enp` Nullable(String),
+    `_loaded_at` DateTime64(3) DEFAULT now64(3)
+)
+ENGINE = MergeTree
+PARTITION BY toYYYYMM(event_at)
+ORDER BY (mpi_oip, id, event_at)
+TTL toDateTime(event_at) + toIntervalYear(5)
+SETTINGS index_granularity = 8192;
+
+CREATE TABLE IF NOT EXISTS raw.kafka_event_insured_person
+(
+    `raw_message` String
+)
+ENGINE = Kafka
+SETTINGS
+    kafka_broker_list = 'kafka-svp-01.gisoms-customer.dev2.pd15.foms.mtp:9093,kafka-svp-02.gisoms-customer.dev2.pd15.foms.mtp:9093,kafka-svp-03.gisoms-customer.dev2.pd15.foms.mtp:9093',
+    kafka_topic_list = 'crm-insured-person',
+    kafka_group_name = 'clickhouse_raw_event_insured_person',
+    kafka_format = 'JSONAsString',
+    kafka_num_consumers = 3,
+    kafka_max_block_size = 10000;
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS raw.mv_event_insured_person TO raw.event_insured_person AS
+SELECT
+    JSONExtractString(raw_message, 'eventType') AS event_type,
+    parseDateTime64BestEffort(JSONExtractString(raw_message, 'eventAt'), 6) AS event_at,
+    JSONExtractString(raw_message, 'resourceData', 'id') AS id,
+    toUInt64OrZero(JSONExtractString(raw_message, 'resourceData', 'meta', 'version')) AS version,
+    parseDateTime64BestEffortOrNull(JSONExtractString(raw_message, 'resourceData', 'meta', 'createdAt'), 6) AS created_at,
+    parseDateTime64BestEffortOrNull(JSONExtractString(raw_message, 'resourceData', 'meta', 'updatedAt'), 6) AS updated_at,
+    JSONExtractString(raw_message, 'resourceData', 'content', 'mpiOip') AS mpi_oip,
+    nullIf(JSONExtractString(raw_message, 'resourceData', 'content', 'enp'), '') AS enp,
+    toDateOrNull(JSONExtractString(raw_message, 'resourceData', 'content', 'birthDate')) AS birth_date,
+    JSONExtractString(raw_message, 'resourceData', 'content', 'genderReference') AS gender_reference,
+    coalesce(nullIf(JSONExtractString(raw_message, 'resourceData', 'content', 'healthGroup', 'healthGroupReference'), ''), nullIf(JSONExtractString(raw_message, 'resourceData', 'content', 'healthGroupReference'), ''), JSONExtractString(raw_message, 'resourceData', 'content', 'healthGroup', 'healthGroupCoding', 'reference')) AS health_group_reference,
+    toDateOrNull(coalesce(nullIf(JSONExtractString(raw_message, 'resourceData', 'content', 'healthGroup', 'healthGroupDate'), ''), nullIf(JSONExtractString(raw_message, 'resourceData', 'content', 'healthGroupDate'), ''))) AS health_group_date,
+    toDateOrNull(JSONExtractString(raw_message, 'resourceData', 'content', 'deceasedDate')) AS deceased_date,
+    nullIf(JSONExtractString(raw_message, 'updateData', 'before', 'content', 'mpiOip'), '') AS before_mpi_oip,
+    nullIf(JSONExtractString(raw_message, 'updateData', 'before', 'content', 'enp'), '') AS before_enp,
+    now64(3) AS _loaded_at
+FROM raw.kafka_event_insured_person;
