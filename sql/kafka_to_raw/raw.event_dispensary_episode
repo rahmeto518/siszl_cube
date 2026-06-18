@@ -1,0 +1,71 @@
+CREATE TABLE IF NOT EXISTS raw.event_dispensary_episode
+(
+    `event_type` LowCardinality(String),
+    `event_at` DateTime64(6),
+    `id` String,
+    `version` UInt64,
+    `created_at` Nullable(DateTime64(6)),
+    `updated_at` Nullable(DateTime64(6)),
+    `cmp_id` Nullable(String),
+    `insured_person_id` String,
+    `disease_id` Nullable(String),
+    `diagnosis_group_reference` LowCardinality(String),
+    `diagnosis_reference` LowCardinality(String),
+    `state_reference` LowCardinality(String),
+    `mo_reference` LowCardinality(String),
+    `mo_site_name` Nullable(String),
+    `doctor_speciality_reference` LowCardinality(String),
+    `doctor_text` Nullable(String),
+    `period_start` Nullable(Date),
+    `period_end` Nullable(Date),
+    `mpi_oip` String,
+    `before_state_reference` Nullable(String),
+    `before_period_start` Nullable(Date),
+    `before_period_end` Nullable(Date),
+    `_loaded_at` DateTime64(3) DEFAULT now64(3)
+)
+ENGINE = MergeTree
+PARTITION BY toYYYYMM(event_at)
+ORDER BY (mpi_oip, id, event_at)
+TTL toDateTime(event_at) + toIntervalYear(5)
+SETTINGS index_granularity = 8192;
+
+CREATE TABLE IF NOT EXISTS raw.kafka_event_dispensary_episode
+(
+    `raw_message` String
+)
+ENGINE = Kafka
+SETTINGS
+    kafka_broker_list = 'kafka-svp-01.gisoms-customer.dev2.pd15.foms.mtp:9093,kafka-svp-02.gisoms-customer.dev2.pd15.foms.mtp:9093,kafka-svp-03.gisoms-customer.dev2.pd15.foms.mtp:9093',
+    kafka_topic_list = 'crm-dispensary-episode',
+    kafka_group_name = 'clickhouse_raw_event_dispensary_episode',
+    kafka_format = 'JSONAsString',
+    kafka_num_consumers = 3,
+    kafka_max_block_size = 10000;
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS raw.mv_event_dispensary_episode TO raw.event_dispensary_episode AS
+SELECT
+    JSONExtractString(raw_message, 'eventType') AS event_type,
+    parseDateTime64BestEffort(JSONExtractString(raw_message, 'eventAt'), 6) AS event_at,
+    JSONExtractString(raw_message, 'resourceData', 'id') AS id,
+    toUInt64OrZero(JSONExtractString(raw_message, 'resourceData', 'meta', 'version')) AS version,
+    parseDateTime64BestEffortOrNull(JSONExtractString(raw_message, 'resourceData', 'meta', 'createdAt'), 6) AS created_at,
+    parseDateTime64BestEffortOrNull(JSONExtractString(raw_message, 'resourceData', 'meta', 'updatedAt'), 6) AS updated_at,
+    nullIf(JSONExtractString(raw_message, 'resourceData', 'content', 'cmpId'), '') AS cmp_id,
+    JSONExtractString(raw_message, 'resourceData', 'content', 'insuredPersonId') AS insured_person_id,
+    nullIf(JSONExtractString(raw_message, 'resourceData', 'content', 'diseaseId'), '') AS disease_id,
+    coalesce(nullIf(JSONExtractString(raw_message, 'resourceData', 'content', 'diagnosisGroupReference'), ''), nullIf(JSONExtractString(raw_message, 'resourceData', 'content', 'diagnosisGroupCoding', 'reference'), '')) AS diagnosis_group_reference,
+    coalesce(nullIf(JSONExtractString(raw_message, 'resourceData', 'extension', 'diagnosisReference'), ''), nullIf(JSONExtractString(raw_message, 'resourceData', 'extension', 'diagnosisCoding', 'reference'), '')) AS diagnosis_reference,
+    coalesce(nullIf(JSONExtractString(raw_message, 'resourceData', 'content', 'stateReference'), ''), nullIf(JSONExtractString(raw_message, 'resourceData', 'content', 'stateCoding', 'reference'), '')) AS state_reference,
+    coalesce(nullIf(JSONExtractString(raw_message, 'resourceData', 'content', 'mo', 'moReference'), ''), nullIf(JSONExtractString(raw_message, 'resourceData', 'content', 'mo', 'moCoding', 'reference'), '')) AS mo_reference,
+    nullIf(JSONExtractString(raw_message, 'resourceData', 'content', 'mo', 'siteName'), '') AS mo_site_name,
+    coalesce(nullIf(JSONExtractString(raw_message, 'resourceData', 'content', 'doctor', 'specialityReference'), ''), nullIf(JSONExtractString(raw_message, 'resourceData', 'content', 'doctor', 'specialityCoding', 'reference'), '')) AS doctor_speciality_reference,
+    nullIf(JSONExtractString(raw_message, 'resourceData', 'content', 'doctor', 'text'), '') AS doctor_text,
+    toDateOrNull(JSONExtractString(raw_message, 'resourceData', 'content', 'period', 'startDateInclude')) AS period_start,
+    toDateOrNull(JSONExtractString(raw_message, 'resourceData', 'content', 'period', 'endDateInclude')) AS period_end,
+    coalesce(JSONExtractString(raw_message, 'resourceData', 'extension', 'insuredPerson', 'mpiOip'), '') AS mpi_oip,
+    nullIf(JSONExtractString(raw_message, 'updateData', 'before', 'content', 'stateReference'), '') AS before_state_reference,
+    toDateOrNull(JSONExtractString(raw_message, 'updateData', 'before', 'content', 'period', 'startDateInclude')) AS before_period_start,
+    toDateOrNull(JSONExtractString(raw_message, 'updateData', 'before', 'content', 'period', 'endDateInclude')) AS before_period_end,
+    now64(3) AS _loaded_at
+FROM raw.kafka_event_dispensary_episode;
