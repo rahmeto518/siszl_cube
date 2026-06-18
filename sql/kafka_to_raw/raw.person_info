@@ -1,0 +1,36 @@
+CREATE TABLE IF NOT EXISTS raw.person_info
+(
+    `mpi_oip` String,
+    `params_vers` Nullable(String),
+    `last_login_at` Nullable(Date),
+    `os_type` Nullable(String),
+    `_loaded_at` DateTime DEFAULT now()
+)
+ENGINE = MergeTree
+PARTITION BY toYYYYMM(coalesce(last_login_at, toDate(_loaded_at)))
+ORDER BY (mpi_oip, _loaded_at)
+TTL _loaded_at + toIntervalYear(5)
+SETTINGS index_granularity = 8192;
+
+CREATE TABLE IF NOT EXISTS raw.kafka_person_info
+(
+    `raw_message` String
+)
+ENGINE = Kafka
+SETTINGS
+    kafka_broker_list = 'kafka-svp-01.gisoms-customer.dev2.pd15.foms.mtp:9093,kafka-svp-02.gisoms-customer.dev2.pd15.foms.mtp:9093,kafka-svp-03.gisoms-customer.dev2.pd15.foms.mtp:9093',
+    kafka_topic_list = 'sdt-person-info',
+    kafka_group_name = 'clickhouse_raw_person_info_sdt',
+    kafka_format = 'JSONAsString',
+    kafka_num_consumers = 3,
+    kafka_max_block_size = 10000;
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS raw.mv_person_info TO raw.person_info AS
+SELECT
+    coalesce(nullIf(JSONExtractString(raw_message, 'mpiOip'), ''), nullIf(JSONExtractString(raw_message, 'mpi_oip'), ''), nullIf(_key, '')) AS mpi_oip,
+    nullIf(JSONExtractString(raw_message, 'paramsVers'), '') AS params_vers,
+    coalesce(toDateOrNull(JSONExtractString(raw_message, 'lastLoginAt')), toDate(parseDateTimeBestEffortOrNull(JSONExtractString(raw_message, 'lastLogin')))) AS last_login_at,
+    nullIf(JSONExtractString(raw_message, 'osType'), '') AS os_type,
+    now() AS _loaded_at
+FROM raw.kafka_person_info
+WHERE coalesce(nullIf(JSONExtractString(raw_message, 'mpiOip'), ''), nullIf(JSONExtractString(raw_message, 'mpi_oip'), ''), nullIf(_key, '')) != '';
