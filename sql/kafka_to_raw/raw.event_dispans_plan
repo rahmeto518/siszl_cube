@@ -1,0 +1,61 @@
+CREATE TABLE IF NOT EXISTS raw.event_dispans_plan
+(
+    `event_type` LowCardinality(String),
+    `event_at` DateTime64(6),
+    `id` String,
+    `version` UInt64,
+    `created_at` Nullable(DateTime64(6)),
+    `updated_at` Nullable(DateTime64(6)),
+    `title` Nullable(String),
+    `execution_state_reference` LowCardinality(String),
+    `period_start` Nullable(Date),
+    `period_end` Nullable(Date),
+    `dispans_episode_id` String,
+    `dispans_plan_template_id` String,
+    `insured_person_id` String,
+    `mpi_oip` String,
+    `before_execution_state_ref` Nullable(String),
+    `before_period_start` Nullable(Date),
+    `before_period_end` Nullable(Date),
+    `_loaded_at` DateTime64(3) DEFAULT now64(3)
+)
+ENGINE = MergeTree
+PARTITION BY toYYYYMM(event_at)
+ORDER BY (mpi_oip, id, event_at)
+TTL toDateTime(event_at) + toIntervalYear(5)
+SETTINGS index_granularity = 8192;
+
+CREATE TABLE IF NOT EXISTS raw.kafka_event_dispans_plan
+(
+    `raw_message` String
+)
+ENGINE = Kafka
+SETTINGS
+    kafka_broker_list = 'kafka-svp-01.gisoms-customer.dev2.pd15.foms.mtp:9093,kafka-svp-02.gisoms-customer.dev2.pd15.foms.mtp:9093,kafka-svp-03.gisoms-customer.dev2.pd15.foms.mtp:9093',
+    kafka_topic_list = 'crm-dispans-plan',
+    kafka_group_name = 'clickhouse_raw_event_dispans_plan',
+    kafka_format = 'JSONAsString',
+    kafka_num_consumers = 3,
+    kafka_max_block_size = 10000;
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS raw.mv_event_dispans_plan TO raw.event_dispans_plan AS
+SELECT
+    JSONExtractString(raw_message, 'eventType') AS event_type,
+    parseDateTime64BestEffort(JSONExtractString(raw_message, 'eventAt'), 6) AS event_at,
+    JSONExtractString(raw_message, 'resourceData', 'id') AS id,
+    toUInt64OrZero(JSONExtractString(raw_message, 'resourceData', 'meta', 'version')) AS version,
+    parseDateTime64BestEffortOrNull(JSONExtractString(raw_message, 'resourceData', 'meta', 'createdAt'), 6) AS created_at,
+    parseDateTime64BestEffortOrNull(JSONExtractString(raw_message, 'resourceData', 'meta', 'updatedAt'), 6) AS updated_at,
+    nullIf(JSONExtractString(raw_message, 'resourceData', 'content', 'title'), '') AS title,
+    JSONExtractString(raw_message, 'resourceData', 'content', 'executionStateReference') AS execution_state_reference,
+    toDateOrNull(JSONExtractString(raw_message, 'resourceData', 'content', 'period', 'startDateInclude')) AS period_start,
+    toDateOrNull(JSONExtractString(raw_message, 'resourceData', 'content', 'period', 'endDateInclude')) AS period_end,
+    JSONExtractString(raw_message, 'resourceData', 'content', 'dispansEpisodeId') AS dispans_episode_id,
+    JSONExtractString(raw_message, 'resourceData', 'content', 'dispansPlanTemplateId') AS dispans_plan_template_id,
+    JSONExtractString(raw_message, 'resourceData', 'extension', 'insuredPerson', 'id') AS insured_person_id,
+    JSONExtractString(raw_message, 'resourceData', 'extension', 'insuredPerson', 'mpiOip') AS mpi_oip,
+    nullIf(JSONExtractString(raw_message, 'updateData', 'before', 'content', 'executionStateReference'), '') AS before_execution_state_ref,
+    toDateOrNull(JSONExtractString(raw_message, 'updateData', 'before', 'content', 'period', 'startDateInclude')) AS before_period_start,
+    toDateOrNull(JSONExtractString(raw_message, 'updateData', 'before', 'content', 'period', 'endDateInclude')) AS before_period_end,
+    now64(3) AS _loaded_at
+FROM raw.kafka_event_dispans_plan;
