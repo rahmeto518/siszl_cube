@@ -1,4 +1,4 @@
-CREATE TABLE IF NOT EXISTS cube.profile
+CREATE TABLE IF NOT EXISTS cube.profiles
 (
     f_region_smo_cd String,
     f_profile_cd String,

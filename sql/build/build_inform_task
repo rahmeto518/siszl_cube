@@ -101,8 +101,8 @@ HAVING
     + task_inform_completed_lk_total
     + task_inform_completed_other_total > 0;
 
--- 2.4. Заполнение основной таблицы cube.inform_task
-INSERT INTO cube.inform_task
+-- 2.4. Заполнение основной таблицы cube.task_inform
+INSERT INTO cube.task_inform
 SELECT
     f_region_smo_cd,
     f_profile_cd,

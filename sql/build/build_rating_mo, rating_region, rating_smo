@@ -1,4 +1,4 @@
-7-10 . rating_mo, rating_region, rating_smo
+7-10 . mo_rating, smo_rating, region_rating
 
 7.1 INSERT INTO tmp.rating_task_base
 SELECT
@@ -129,7 +129,7 @@ GROUP BY
     smo_cd,
     mo_cd;
 
-7.5 INSERT INTO cube.rating_region
+7.5 INSERT INTO cube.smo_rating
 (
     f_y,
     f_q,
@@ -202,7 +202,7 @@ FROM
         region_smo_cd
 );
 
-7.6 INSERT INTO cube.rating_smo
+7.6 INSERT INTO cube.region_rating
 (
     f_y, f_q, f_region_smo_cd, f_profile_cd, f_dn_group_cd, f_smo, f_mo,
     smo_cd,
@@ -239,7 +239,7 @@ FROM
         smo_cd
 );
 
-7.6 INSERT INTO cube.rating_mo
+7.6 INSERT INTO cube.mo_rating
 (
     f_y, f_q, f_region_smo_cd, f_profile_cd, f_dn_group_cd, f_smo, f_mo,
     mo_cd,

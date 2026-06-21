@@ -19,9 +19,9 @@ WHERE task_id IS NOT NULL
   AND task_status_cd IN (1, 2)
   AND toYear(assumeNotNull(closed_dt)) BETWEEN 2018 AND 2027;
 
-TRUNCATE TABLE cube.done;
+TRUNCATE TABLE cube.execution_by_month;
 
-INSERT INTO cube.done
+INSERT INTO cube.execution_by_month
 WITH prepared AS
 (
     SELECT

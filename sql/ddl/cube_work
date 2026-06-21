@@ -1,4 +1,4 @@
-CREATE TABLE cube.work2
+CREATE TABLE cube.targets
 (
     `f_region_smo_cd` String,
     `f_profile_cd` String,

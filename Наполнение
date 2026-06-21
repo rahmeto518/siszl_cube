@@ -382,9 +382,9 @@ WHERE task_id IS NOT NULL
   AND task_status_cd IN (1, 2)
   AND toYear(assumeNotNull(closed_dt)) BETWEEN 2018 AND 2027;
 
-3.2 TRUNCATE TABLE cube.done;
+3.2 TRUNCATE TABLE cube.execution_by_month;
 
-INSERT INTO cube.done
+INSERT INTO cube.execution_by_month
 WITH prepared AS
 (
     SELECT
@@ -778,9 +778,9 @@ GROUP BY
 5.2. profile_task_agg 
 ??? 
 
-5.3 TRUNCATE TABLE cube.profile;
+5.3 TRUNCATE TABLE cube.profiles;
 
-INSERT INTO cube.profile
+INSERT INTO cube.profiles
 (
     f_region_smo_cd,
     f_profile_cd,
@@ -1140,8 +1140,8 @@ range(36)
 )
 ) AS period_tuple
 );
-6.5 TRUNCATE TABLE cube.work;
-INSERT INTO cube.work
+6.5 TRUNCATE TABLE cube.targets;
+INSERT INTO cube.targets
 (
     f_region_smo_cd,
     f_profile_cd,
@@ -1174,7 +1174,7 @@ SELECT
     now64(3, 'Europe/Moscow') AS insert_dttm,
     now64(3, 'Europe/Moscow') AS update_dttm
 FROM tmp.work_cube_agg AS a
-LEFT JOIN cube.work AS w
+LEFT JOIN cube.targets AS w
     ON  a.f_region_smo_cd = w.f_region_smo_cd
     AND a.f_profile_cd = w.f_profile_cd
     AND a.f_dn_group_cd = w.f_dn_group_cd
@@ -1192,7 +1192,7 @@ WHERE
  OR f_smo = '0'
  OR f_mo = '0'
 LIMIT 10;
-7-10 . rating_mo, rating_region, rating_smo
+7-10 . mo_rating, smo_rating, region_rating
 7.1 INSERT INTO tmp.rating_task_base
 SELECT
     rb.mpioip,
@@ -1322,7 +1322,7 @@ GROUP BY
     smo_cd,
     mo_cd;
 
-7.5 INSERT INTO cube.rating_region
+7.5 INSERT INTO cube.smo_rating
 (
     f_y,
     f_q,
@@ -1395,7 +1395,7 @@ FROM
         region_smo_cd
 );
 
-7.6 INSERT INTO cube.rating_smo
+7.6 INSERT INTO cube.region_rating
 (
     f_y, f_q, f_region_smo_cd, f_profile_cd, f_dn_group_cd, f_smo, f_mo,
     smo_cd,
@@ -1432,7 +1432,7 @@ FROM
         smo_cd
 );
 
-7.6 INSERT INTO cube.rating_mo
+7.6 INSERT INTO cube.mo_rating
 (
     f_y, f_q, f_region_smo_cd, f_profile_cd, f_dn_group_cd, f_smo, f_mo,
     mo_cd,

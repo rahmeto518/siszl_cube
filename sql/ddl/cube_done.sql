@@ -15,7 +15,7 @@ CREATE TABLE IF NOT EXISTS tmp.done_task_month_source
 ENGINE = MergeTree
 ORDER BY (closed_y, closed_q, closed_m, task_status_cd, region_smo_cd, profile_cd, dn_group_cd, smo_cd, mo_cd, task_id);
 
-CREATE TABLE IF NOT EXISTS cube.done
+CREATE TABLE IF NOT EXISTS cube.execution_by_month
 (
     f_region_smo_cd String,
     f_profile_cd String,

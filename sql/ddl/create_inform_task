@@ -1,4 +1,4 @@
-CREATE TABLE IF NOT EXISTS cube.inform_task
+CREATE TABLE IF NOT EXISTS cube.task_inform
 (
     f_region_smo_cd String,
     f_profile_cd String,

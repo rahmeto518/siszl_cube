@@ -135,9 +135,9 @@ GROUP BY
 5.2. profile_task_agg 
 ??? 
 
-5.3 TRUNCATE TABLE cube.profile;
+5.3 TRUNCATE TABLE cube.profiles;
 
-INSERT INTO cube.profile
+INSERT INTO cube.profiles
 (
     f_region_smo_cd,
     f_profile_cd,

@@ -227,8 +227,8 @@ range(36)
 )
 ) AS period_tuple
 );
-6.5 TRUNCATE TABLE cube.work;
-INSERT INTO cube.work
+6.5 TRUNCATE TABLE cube.targets;
+INSERT INTO cube.targets
 (
     f_region_smo_cd,
     f_profile_cd,
@@ -261,7 +261,7 @@ SELECT
     now64(3, 'Europe/Moscow') AS insert_dttm,
     now64(3, 'Europe/Moscow') AS update_dttm
 FROM tmp.work_cube_agg AS a
-LEFT JOIN cube.work AS w
+LEFT JOIN cube.targets AS w
     ON  a.f_region_smo_cd = w.f_region_smo_cd
     AND a.f_profile_cd = w.f_profile_cd
     AND a.f_dn_group_cd = w.f_dn_group_cd
