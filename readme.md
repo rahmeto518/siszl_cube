@@ -39,8 +39,10 @@
 | sl_dn_cnt | INSERT в cube.basic_metrics, выражение `uniqExact(disp_id)` |
 | zl_on_dn_total | INSERT в cube.basic_metrics, выражение `uniqExactIf(mpioip, out_dt IS NULL)` |
 | death_new | INSERT в cube.basic_metrics, выражение `uniqExactIf(mpioip, death_dt IS NOT NULL)` |
+| death_new_percent | INSERT в cube.basic_metrics, выражение `if(sl_dn_cnt = 0, 0, round(death_new * 100 / sl_dn_cnt))` |
 | all_tasks | INSERT в cube.basic_metrics, выражение `uniqExactIf(task_id, task_status_cd != 5)` |
 | main_execution | INSERT в cube.basic_metrics, выражение `uniqExactIf(task_id, task_status_cd IN (1, 2))` |
+| main_execution_percent | INSERT в cube.basic_metrics, выражение `if(all_tasks = 0, 0, round(main_execution * 100 / all_tasks))` |
 
 ---
 
@@ -105,5 +107,10 @@
 
 ```sql
 SELECT count() FROM cube.basic_metrics;
+
+SELECT
+    countIf(sl_dn_cnt = 0 AND death_new_percent != 0) AS wrong_death_percent,
+    countIf(all_tasks = 0 AND main_execution_percent != 0) AS wrong_execution_percent
+FROM cube.basic_metrics;
 
 

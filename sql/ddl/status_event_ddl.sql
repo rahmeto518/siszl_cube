@@ -1,4 +1,4 @@
-CREATE TABLE IF NOT EXISTS cube.statusevent
+CREATE TABLE IF NOT EXISTS cube.event_statuses
 (
     f_region_smo_cd String,
     f_profile_cd String,
@@ -7,14 +7,14 @@ CREATE TABLE IF NOT EXISTS cube.statusevent
     f_q Int32,
     f_smo String,
     f_mo String,
-    done_task_count_v UInt64,
-    done_task_percent_v Decimal(18, 2),
-    assumpt_task_count_v UInt64,
-    assumpt_task_percent_v Decimal(18, 2),
-    plan_task_count_v UInt64,
-    plan_task_percent_v Decimal(18, 2),
-    failed_task_count_v UInt64,
-    failed_task_percent_v Decimal(18, 2),
+    done_task_countV UInt64,
+    done_task_percentV Decimal(18, 2),
+    assumpt_task_countV UInt64,
+    assumpt_task_percentV Decimal(18, 2),
+    plan_task_countV UInt64,
+    plan_task_percentV Decimal(18, 2),
+    failed_task_countV UInt64,
+    failed_task_percentV Decimal(18, 2),
     all_tasks UInt64,
     insert_dttm DateTime64(3, 'Europe/Moscow'),
     update_dttm DateTime64(3, 'Europe/Moscow')

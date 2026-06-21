@@ -58,9 +58,9 @@ GROUP BY
     f_mo,
     task_status_cd;
 
-TRUNCATE TABLE cube.statusevent;
+TRUNCATE TABLE cube.event_statuses;
 
-INSERT INTO cube.statusevent
+INSERT INTO cube.event_statuses
 (
     f_region_smo_cd,
     f_profile_cd,
@@ -69,14 +69,14 @@ INSERT INTO cube.statusevent
     f_q,
     f_smo,
     f_mo,
-    done_task_count_v,
-    done_task_percent_v,
-    assumpt_task_count_v,
-    assumpt_task_percent_v,
-    plan_task_count_v,
-    plan_task_percent_v,
-    failed_task_count_v,
-    failed_task_percent_v,
+    done_task_countV,
+    done_task_percentV,
+    assumpt_task_countV,
+    assumpt_task_percentV,
+    plan_task_countV,
+    plan_task_percentV,
+    failed_task_countV,
+    failed_task_percentV,
     all_tasks,
     insert_dttm,
     update_dttm

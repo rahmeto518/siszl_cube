@@ -12,8 +12,10 @@ CREATE TABLE cube.basic_metrics
     sl_dn_cnt UInt64,
     zl_on_dn_total UInt64,
     death_new UInt64,
+    death_new_percent UInt64,
     all_tasks UInt64,
-    main_execution UInt64
+    main_execution UInt64,
+    main_execution_percent UInt64
 )
 ENGINE = MergeTree
 ORDER BY
